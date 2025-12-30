@@ -61,16 +61,22 @@ public actor MDNSListener {
     ]
 
     /// Start browsing for services
-    public func start(serviceTypes: [String]? = nil, onDiscovered: @escaping ServiceHandler) {
-        guard !isRunning else { return }
+    public func start(serviceTypes: [String]? = nil, onDiscovered: @escaping ServiceHandler) async {
+        guard !isRunning else {
+            print("[mDNS] Already running, skipping start")
+            return
+        }
+        print("[mDNS] Starting mDNS browser...")
         isRunning = true
         onServiceDiscovered = onDiscovered
 
         let types = serviceTypes ?? Self.smartServiceTypes
+        print("[mDNS] Browsing for \(types.count) service types...")
 
         for serviceType in types {
             startBrowser(for: serviceType)
         }
+        print("[mDNS] All browsers started")
     }
 
     /// Stop all browsers
