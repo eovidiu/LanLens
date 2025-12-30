@@ -18,21 +18,38 @@ public actor UPnPDescriptionFetcher {
     /// - Parameter locationURL: The URL from SSDP LOCATION header
     /// - Returns: Parsed DeviceFingerprint with UPnP data, or nil if fetch/parse failed
     public func fetchDescription(from locationURL: String) async -> DeviceFingerprint? {
+        print("[UPnP] Fetching description from: \(locationURL)")
+
         guard let url = URL(string: locationURL) else {
+            print("[UPnP] Invalid URL: \(locationURL)")
             return nil
         }
 
         do {
             let (data, response) = try await session.data(from: url)
 
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[UPnP] Non-HTTP response from \(locationURL)")
                 return nil
             }
 
-            return parseXML(data: data)
+            print("[UPnP] HTTP \(httpResponse.statusCode) from \(locationURL)")
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                print("[UPnP] Bad status code: \(httpResponse.statusCode)")
+                return nil
+            }
+
+            print("[UPnP] Received \(data.count) bytes, parsing XML...")
+            let result = parseXML(data: data)
+            if let fp = result {
+                print("[UPnP] Parsed successfully: \(fp.friendlyName ?? "unknown") by \(fp.manufacturer ?? "unknown")")
+            } else {
+                print("[UPnP] XML parsing returned nil")
+            }
+            return result
         } catch {
-            // Timeout or network error - silently return nil
+            print("[UPnP] Network error: \(error.localizedDescription)")
             return nil
         }
     }

@@ -193,6 +193,11 @@ public actor SSDPListener {
         )
 
         if discoveredDevices[usn] == nil {
+            print("[SSDP] New device discovered:")
+            print("[SSDP]   - USN: \(usn)")
+            print("[SSDP]   - Location: \(location)")
+            print("[SSDP]   - Server: \(headers["SERVER"] ?? "unknown")")
+            print("[SSDP]   - Host IP: \(hostIP ?? "unknown")")
             discoveredDevices[usn] = device
             onDeviceDiscovered?(device)
         }

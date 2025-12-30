@@ -28,29 +28,45 @@ public actor DeviceFingerprintManager {
         userAgents: [String]? = nil,
         forceRefresh: Bool = false
     ) async -> DeviceFingerprint? {
+        print("[FingerprintManager] Starting fingerprint for \(device.mac)")
+        print("[FingerprintManager]   - Location URL: \(locationURL ?? "nil")")
+        print("[FingerprintManager]   - Fingerbank API Key: \(fingerbankAPIKey != nil ? "provided" : "nil")")
+        print("[FingerprintManager]   - Force Refresh: \(forceRefresh)")
+
         var upnpFingerprint: DeviceFingerprint?
         var fingerbankFingerprint: DeviceFingerprint?
 
         // Level 1: UPnP fingerprinting
         if let location = locationURL ?? getLocationURL(from: device) {
+            print("[FingerprintManager] Level 1 (UPnP): Processing...")
             if !forceRefresh {
                 // Check cache first
                 upnpFingerprint = await cacheManager.getUPnPCache(mac: device.mac, locationURL: location)
+                if upnpFingerprint != nil {
+                    print("[FingerprintManager] Level 1 (UPnP): Cache HIT")
+                }
             }
 
             if upnpFingerprint == nil {
+                print("[FingerprintManager] Level 1 (UPnP): Fetching from device...")
                 // Fetch fresh
                 upnpFingerprint = await upnpFetcher.fetchDescription(from: location)
 
                 // Cache the result
                 if let fp = upnpFingerprint {
+                    print("[FingerprintManager] Level 1 (UPnP): Caching result")
                     await cacheManager.storeUPnPCache(mac: device.mac, locationURL: location, fingerprint: fp)
+                } else {
+                    print("[FingerprintManager] Level 1 (UPnP): Fetch returned nil")
                 }
             }
+        } else {
+            print("[FingerprintManager] Level 1 (UPnP): Skipped - no location URL")
         }
 
         // Level 2: Fingerbank (if API key provided)
         if let apiKey = fingerbankAPIKey, !apiKey.isEmpty {
+            print("[FingerprintManager] Level 2 (Fingerbank): Processing...")
             if !forceRefresh {
                 // Check cache first
                 fingerbankFingerprint = await cacheManager.getFingerbankCache(
@@ -58,9 +74,13 @@ public actor DeviceFingerprintManager {
                     dhcpFingerprint: dhcpFingerprint,
                     userAgents: userAgents
                 )
+                if fingerbankFingerprint != nil {
+                    print("[FingerprintManager] Level 2 (Fingerbank): Cache HIT")
+                }
             }
 
             if fingerbankFingerprint == nil {
+                print("[FingerprintManager] Level 2 (Fingerbank): Calling API...")
                 // Fetch from API
                 do {
                     fingerbankFingerprint = try await fingerbankService.interrogate(
@@ -72,6 +92,7 @@ public actor DeviceFingerprintManager {
 
                     // Cache the result
                     if let fp = fingerbankFingerprint {
+                        print("[FingerprintManager] Level 2 (Fingerbank): Caching result")
                         await cacheManager.storeFingerbankCache(
                             mac: device.mac,
                             dhcpFingerprint: dhcpFingerprint,
@@ -80,14 +101,17 @@ public actor DeviceFingerprintManager {
                         )
                     }
                 } catch {
-                    // Fingerbank failed - continue with Level 1 only
-                    // Could log the error here for debugging
+                    print("[FingerprintManager] Level 2 (Fingerbank): ERROR - \(error)")
                 }
             }
+        } else {
+            print("[FingerprintManager] Level 2 (Fingerbank): Skipped - no API key")
         }
 
         // Merge results
-        return mergeFingerprints(upnp: upnpFingerprint, fingerbank: fingerbankFingerprint)
+        let result = mergeFingerprints(upnp: upnpFingerprint, fingerbank: fingerbankFingerprint)
+        print("[FingerprintManager] Final result: \(result != nil ? "success" : "nil")")
+        return result
     }
 
     /// Quick fingerprint using only Level 1 (UPnP)

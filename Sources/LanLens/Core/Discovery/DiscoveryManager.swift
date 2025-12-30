@@ -324,6 +324,8 @@ public actor DiscoveryManager {
                 // Trigger UPnP fingerprinting asynchronously
                 let macAddress = device.mac
                 let location = ssdpDevice.location
+                print("[Fingerprint] SSDP device found: \(macAddress) at \(hostIP)")
+                print("[Fingerprint] SSDP LOCATION URL: \(location)")
                 Task { [weak self] in
                     await self?.fetchUPnPFingerprint(mac: macAddress, locationURL: location)
                 }
@@ -333,31 +335,52 @@ public actor DiscoveryManager {
 
     /// Fetch UPnP fingerprint for a device
     private func fetchUPnPFingerprint(mac: String, locationURL: String) async {
-        guard var device = devices[mac] else { return }
+        guard var device = devices[mac] else {
+            print("[Fingerprint] Device \(mac) not found in devices list")
+            return
+        }
 
         // Only fetch if we don't already have fingerprint data
-        if device.fingerprint != nil { return }
+        if device.fingerprint != nil {
+            print("[Fingerprint] Device \(mac) already has fingerprint, skipping")
+            return
+        }
 
+        print("[Fingerprint] Starting fingerprint fetch for \(mac)")
         let fingerprint = await DeviceFingerprintManager.shared.quickFingerprint(
             device: device,
             locationURL: locationURL
         )
 
         if let fp = fingerprint {
+            print("[Fingerprint] SUCCESS for \(mac):")
+            print("[Fingerprint]   - Source: \(fp.source.rawValue)")
+            print("[Fingerprint]   - Friendly Name: \(fp.friendlyName ?? "nil")")
+            print("[Fingerprint]   - Manufacturer: \(fp.manufacturer ?? "nil")")
+            print("[Fingerprint]   - Model: \(fp.modelName ?? "nil")")
+            print("[Fingerprint]   - Fingerbank Name: \(fp.fingerbankDeviceName ?? "nil")")
+            print("[Fingerprint]   - Fingerbank Score: \(fp.fingerbankScore.map { String($0) } ?? "nil")")
+            print("[Fingerprint]   - Cache Hit: \(fp.cacheHit)")
+
             device.fingerprint = fp
 
             // Update device type from fingerprint if still unknown
             if device.deviceType == .unknown {
-                device.deviceType = inferDeviceType(from: fp)
+                let inferredType = inferDeviceType(from: fp)
+                print("[Fingerprint]   - Inferred Type: \(inferredType.rawValue)")
+                device.deviceType = inferredType
             }
 
             // Update hostname from friendly name if not set
             if device.hostname == nil, let friendlyName = fp.friendlyName {
+                print("[Fingerprint]   - Setting hostname to: \(friendlyName)")
                 device.hostname = friendlyName
             }
 
             devices[mac] = device
             onDeviceUpdate?(device, .updated)
+        } else {
+            print("[Fingerprint] FAILED for \(mac) - no fingerprint data returned")
         }
     }
 

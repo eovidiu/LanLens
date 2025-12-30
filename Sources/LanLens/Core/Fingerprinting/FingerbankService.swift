@@ -42,12 +42,16 @@ public actor FingerbankService {
         userAgents: [String]? = nil,
         apiKey: String
     ) async throws -> DeviceFingerprint {
+        print("[Fingerbank] Interrogating MAC: \(mac)")
+
         guard !apiKey.isEmpty else {
+            print("[Fingerbank] ERROR: No API key provided")
             throw FingerbankError.noAPIKey
         }
 
         // Check rate limiting
         if let resetTime = rateLimitResetTime, Date() < resetTime {
+            print("[Fingerbank] ERROR: Rate limited until \(resetTime)")
             throw FingerbankError.rateLimitExceeded(resetAt: resetTime)
         }
 
@@ -71,37 +75,48 @@ public actor FingerbankService {
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        print("[Fingerbank] Sending request to API...")
 
         do {
             let (data, response) = try await session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
+                print("[Fingerbank] ERROR: Non-HTTP response")
                 throw FingerbankError.invalidResponse
             }
+
+            print("[Fingerbank] HTTP \(httpResponse.statusCode)")
 
             // Handle response status
             switch httpResponse.statusCode {
             case 200...299:
-                return try parseResponse(data: data)
+                let result = try parseResponse(data: data)
+                print("[Fingerbank] SUCCESS: \(result.fingerbankDeviceName ?? "unknown") (score: \(result.fingerbankScore ?? 0))")
+                return result
 
             case 401:
+                print("[Fingerbank] ERROR: Invalid API key (401)")
                 throw FingerbankError.invalidAPIKey
 
             case 429:
                 // Rate limited - set reset time to 1 hour from now
                 let resetTime = Date().addingTimeInterval(3600)
                 rateLimitResetTime = resetTime
+                print("[Fingerbank] ERROR: Rate limited (429), reset at \(resetTime)")
                 throw FingerbankError.rateLimitExceeded(resetAt: resetTime)
 
             case 500...599:
+                print("[Fingerbank] ERROR: Server error (\(httpResponse.statusCode))")
                 throw FingerbankError.serverError(statusCode: httpResponse.statusCode)
 
             default:
+                print("[Fingerbank] ERROR: Unexpected status (\(httpResponse.statusCode))")
                 throw FingerbankError.serverError(statusCode: httpResponse.statusCode)
             }
         } catch let error as FingerbankError {
             throw error
         } catch {
+            print("[Fingerbank] ERROR: Network error - \(error.localizedDescription)")
             throw FingerbankError.networkError(error)
         }
     }
