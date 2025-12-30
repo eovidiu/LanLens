@@ -159,9 +159,25 @@ final class AppState {
             scanError = "ARP scan failed: \(error.localizedDescription)"
         }
 
-        // Checkpoint: Check if cancelled before DNS-SD
+        // Checkpoint: Check if cancelled before passive discovery
         guard !Task.isCancelled else {
             logger.info("Quick scan cancelled after ARP")
+            isScanning = false
+            return
+        }
+
+        // Start passive discovery (SSDP + mDNS) to detect smart devices
+        logger.debug("Starting passive discovery (SSDP + mDNS)...")
+        await DiscoveryManager.shared.startPassiveDiscovery { [weak self] device, updateType in
+            Task { @MainActor [weak self] in
+                self?.queueDeviceUpdate(device, type: updateType)
+            }
+        }
+
+        // Checkpoint: Check if cancelled before DNS-SD
+        guard !Task.isCancelled else {
+            logger.info("Quick scan cancelled after passive discovery")
+            await DiscoveryManager.shared.stopPassiveDiscovery()
             isScanning = false
             return
         }
@@ -177,9 +193,13 @@ final class AppState {
         // Checkpoint: Check if cancelled after DNS-SD
         guard !Task.isCancelled else {
             logger.info("Quick scan cancelled after DNS-SD")
+            await DiscoveryManager.shared.stopPassiveDiscovery()
             isScanning = false
             return
         }
+
+        // Stop passive discovery
+        await DiscoveryManager.shared.stopPassiveDiscovery()
 
         logger.debug("DNS-SD discovery completed")
 
