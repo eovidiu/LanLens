@@ -90,20 +90,36 @@ final class AppState {
         isScanning = true
         scanError = nil
 
+        print("Starting quick scan")
+
         do {
             // Read ARP table first
+            print("Reading ARP table...")
             let arpDevices = try await DiscoveryManager.shared.getARPDevices()
+            print("ARP scan found \(arpDevices.count) devices")
             applyDevicesUpdate(arpDevices)
         } catch {
             scanError = "ARP scan failed: \(error.localizedDescription)"
         }
 
+        // Start passive discovery (SSDP + mDNS) to detect smart devices
+        print("Starting passive discovery (SSDP + mDNS)...")
+        await DiscoveryManager.shared.startPassiveDiscovery { [weak self] device, updateType in
+            Task { @MainActor [weak self] in
+                self?.queueDeviceUpdate(device, type: updateType)
+            }
+        }
+
         // Run dns-sd discovery with debounced callback
+        print("Starting DNS-SD discovery (5 seconds)...")
         await DiscoveryManager.shared.runDNSSDDiscovery(duration: 5) { [weak self] device, updateType in
             Task { @MainActor [weak self] in
                 self?.queueDeviceUpdate(device, type: updateType)
             }
         }
+
+        // Stop passive discovery after DNS-SD completes
+        await DiscoveryManager.shared.stopPassiveDiscovery()
 
         await refreshDevices()
         lastScanTime = Date()

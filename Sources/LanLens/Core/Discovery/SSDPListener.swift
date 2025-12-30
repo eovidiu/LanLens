@@ -39,14 +39,20 @@ public actor SSDPListener {
 
     /// Start listening for SSDP announcements
     public func start(onDiscovered: @escaping DeviceHandler) {
-        guard !isRunning else { return }
+        guard !isRunning else {
+            print("[SSDP] Already running, skipping start")
+            return
+        }
+        print("[SSDP] Starting SSDP listener...")
         isRunning = true
         onDeviceDiscovered = onDiscovered
 
         // Start passive listening
+        print("[SSDP] Joining multicast group 239.255.255.250:1900...")
         startListening()
 
         // Also send M-SEARCH to discover existing devices
+        print("[SSDP] Sending M-SEARCH discovery request...")
         Task {
             await sendMSearch()
         }

@@ -20,11 +20,16 @@ public actor DiscoveryManager {
 
     /// Start passive discovery (mDNS + SSDP)
     public func startPassiveDiscovery(onUpdate: @escaping DeviceUpdateHandler) async {
-        guard !isRunning else { return }
+        guard !isRunning else {
+            print("[Discovery] Passive discovery already running, skipping")
+            return
+        }
+        print("[Discovery] Starting passive discovery (mDNS + SSDP)...")
         isRunning = true
         onDeviceUpdate = onUpdate
 
         // Start mDNS listener
+        print("[Discovery] Starting mDNS listener...")
         await MDNSListener.shared.start { [weak self] service in
             Task { [weak self] in
                 await self?.handleMDNSService(service)
@@ -32,11 +37,13 @@ public actor DiscoveryManager {
         }
 
         // Start SSDP listener
+        print("[Discovery] Starting SSDP listener...")
         await SSDPListener.shared.start { [weak self] device in
             Task { [weak self] in
                 await self?.handleSSDPDevice(device)
             }
         }
+        print("[Discovery] Passive discovery started successfully")
     }
 
     /// Stop passive discovery
