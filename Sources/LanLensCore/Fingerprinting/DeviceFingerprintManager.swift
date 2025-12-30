@@ -1,5 +1,23 @@
 import Foundation
 
+// Debug log to file for tracing
+private func debugLog(_ message: String) {
+    let logPath = "/tmp/lanlens_debug.log"
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(timestamp)] [FingerprintMgr] \(message)\n"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: logPath) {
+            if let handle = FileHandle(forWritingAtPath: logPath) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: URL(fileURLWithPath: logPath))
+        }
+    }
+}
+
 /// Main orchestrator for device fingerprinting
 /// Coordinates Level 1 (UPnP) and Level 2 (Fingerbank) fingerprinting with caching
 public actor DeviceFingerprintManager {
@@ -28,45 +46,45 @@ public actor DeviceFingerprintManager {
         userAgents: [String]? = nil,
         forceRefresh: Bool = false
     ) async -> DeviceFingerprint? {
-        print("[FingerprintManager] Starting fingerprint for \(device.mac)")
-        print("[FingerprintManager]   - Location URL: \(locationURL ?? "nil")")
-        print("[FingerprintManager]   - Fingerbank API Key: \(fingerbankAPIKey != nil ? "provided" : "nil")")
-        print("[FingerprintManager]   - Force Refresh: \(forceRefresh)")
+        debugLog("Starting fingerprint for \(device.mac)")
+        debugLog("  - Location URL: \(locationURL ?? "nil")")
+        debugLog("  - Fingerbank API Key: \(fingerbankAPIKey != nil ? "provided" : "nil")")
+        debugLog("  - Force Refresh: \(forceRefresh)")
 
         var upnpFingerprint: DeviceFingerprint?
         var fingerbankFingerprint: DeviceFingerprint?
 
         // Level 1: UPnP fingerprinting
         if let location = locationURL ?? getLocationURL(from: device) {
-            print("[FingerprintManager] Level 1 (UPnP): Processing...")
+            debugLog("Level 1 (UPnP): Processing...")
             if !forceRefresh {
                 // Check cache first
                 upnpFingerprint = await cacheManager.getUPnPCache(mac: device.mac, locationURL: location)
                 if upnpFingerprint != nil {
-                    print("[FingerprintManager] Level 1 (UPnP): Cache HIT")
+                    debugLog("Level 1 (UPnP): Cache HIT")
                 }
             }
 
             if upnpFingerprint == nil {
-                print("[FingerprintManager] Level 1 (UPnP): Fetching from device...")
+                debugLog("Level 1 (UPnP): Fetching from device...")
                 // Fetch fresh
                 upnpFingerprint = await upnpFetcher.fetchDescription(from: location)
 
                 // Cache the result
                 if let fp = upnpFingerprint {
-                    print("[FingerprintManager] Level 1 (UPnP): Caching result")
+                    debugLog("Level 1 (UPnP): Caching result - name=\(fp.friendlyName ?? "nil") model=\(fp.modelName ?? "nil")")
                     await cacheManager.storeUPnPCache(mac: device.mac, locationURL: location, fingerprint: fp)
                 } else {
-                    print("[FingerprintManager] Level 1 (UPnP): Fetch returned nil")
+                    debugLog("Level 1 (UPnP): Fetch returned nil")
                 }
             }
         } else {
-            print("[FingerprintManager] Level 1 (UPnP): Skipped - no location URL")
+            debugLog("Level 1 (UPnP): Skipped - no location URL")
         }
 
         // Level 2: Fingerbank (if API key provided)
         if let apiKey = fingerbankAPIKey, !apiKey.isEmpty {
-            print("[FingerprintManager] Level 2 (Fingerbank): Processing...")
+            debugLog("Level 2 (Fingerbank): Processing...")
             if !forceRefresh {
                 // Check cache first
                 fingerbankFingerprint = await cacheManager.getFingerbankCache(
@@ -75,12 +93,12 @@ public actor DeviceFingerprintManager {
                     userAgents: userAgents
                 )
                 if fingerbankFingerprint != nil {
-                    print("[FingerprintManager] Level 2 (Fingerbank): Cache HIT")
+                    debugLog("Level 2 (Fingerbank): Cache HIT")
                 }
             }
 
             if fingerbankFingerprint == nil {
-                print("[FingerprintManager] Level 2 (Fingerbank): Calling API...")
+                debugLog("Level 2 (Fingerbank): Calling API for \(device.mac)...")
                 // Fetch from API
                 do {
                     fingerbankFingerprint = try await fingerbankService.interrogate(
@@ -92,7 +110,7 @@ public actor DeviceFingerprintManager {
 
                     // Cache the result
                     if let fp = fingerbankFingerprint {
-                        print("[FingerprintManager] Level 2 (Fingerbank): Caching result")
+                        debugLog("Level 2 (Fingerbank): SUCCESS - device=\(fp.fingerbankDeviceName ?? "nil") score=\(fp.fingerbankScore ?? 0)")
                         await cacheManager.storeFingerbankCache(
                             mac: device.mac,
                             dhcpFingerprint: dhcpFingerprint,
@@ -101,16 +119,16 @@ public actor DeviceFingerprintManager {
                         )
                     }
                 } catch {
-                    print("[FingerprintManager] Level 2 (Fingerbank): ERROR - \(error)")
+                    debugLog("Level 2 (Fingerbank): ERROR - \(error)")
                 }
             }
         } else {
-            print("[FingerprintManager] Level 2 (Fingerbank): Skipped - no API key")
+            debugLog("Level 2 (Fingerbank): Skipped - no API key")
         }
 
         // Merge results
         let result = mergeFingerprints(upnp: upnpFingerprint, fingerbank: fingerbankFingerprint)
-        print("[FingerprintManager] Final result: \(result != nil ? "success" : "nil")")
+        debugLog("Final result for \(device.mac): \(result != nil ? "success" : "nil")")
         return result
     }
 

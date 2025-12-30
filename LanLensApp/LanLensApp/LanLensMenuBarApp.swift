@@ -1,5 +1,8 @@
 import SwiftUI
 import LanLensCore
+import os.log
+
+private let appLogger = Logger(subsystem: "com.lanlens.app", category: "AppLaunch")
 
 @main
 struct LanLensMenuBarApp: App {
@@ -10,7 +13,12 @@ struct LanLensMenuBarApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+    init() {
+        appLogger.info("LanLensMenuBarApp init called")
+    }
+
     var body: some Scene {
+        let _ = appLogger.info("LanLensMenuBarApp body evaluated, icon: \(menuBarIcon)")
         MenuBarExtra {
             MenuBarView()
                 .environment(appState)

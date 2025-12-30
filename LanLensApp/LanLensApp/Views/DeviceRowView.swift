@@ -83,22 +83,55 @@ struct DeviceRowView: View {
     }
 
     private var displayName: String {
+        let macSuffix = String(device.mac.suffix(5)).replacingOccurrences(of: ":", with: "")
+
         if let label = device.userLabel, !label.isEmpty {
             return label
         }
         if let hostname = device.hostname, !hostname.isEmpty {
             return hostname.replacingOccurrences(of: ".local", with: "")
         }
+        // Check fingerprint for friendly name (UPnP)
+        if let friendlyName = device.fingerprint?.friendlyName, !friendlyName.isEmpty {
+            return friendlyName
+        }
+        // Check Fingerbank device name - but prefer vendor if Fingerbank returns generic category
+        if let fingerbankName = device.fingerprint?.fingerbankDeviceName, !fingerbankName.isEmpty {
+            // Generic category names to skip in favor of vendor
+            let genericCategories = [
+                "Audio, Imaging or Video Equipment",
+                "Generic Android",
+                "Generic Apple",
+                "Network Device",
+                "Unknown",
+                "IOT Device"
+            ]
+
+            let isGeneric = genericCategories.contains { fingerbankName.lowercased().contains($0.lowercased()) }
+
+            if !isGeneric {
+                return "\(fingerbankName) (\(macSuffix))"
+            }
+            // Fall through to vendor if generic
+        }
+        // Check fingerprint for manufacturer + model (UPnP)
+        if let manufacturer = device.fingerprint?.manufacturer {
+            if let model = device.fingerprint?.modelName {
+                return "\(manufacturer) \(model)"
+            }
+            return manufacturer
+        }
         if let vendor = device.vendor, !vendor.isEmpty {
-            // Use vendor + last 4 chars of MAC for uniqueness
-            let macSuffix = String(device.mac.suffix(5)).replacingOccurrences(of: ":", with: "")
             return "\(vendor) (\(macSuffix))"
+        }
+        // Use Fingerbank name even if generic (better than nothing)
+        if let fingerbankName = device.fingerprint?.fingerbankDeviceName, !fingerbankName.isEmpty {
+            return "\(fingerbankName) (\(macSuffix))"
         }
         if device.deviceType != .unknown {
             return device.deviceType.rawValue.capitalized
         }
-        // Last resort: "Device" + last 4 chars of MAC
-        let macSuffix = String(device.mac.suffix(5)).replacingOccurrences(of: ":", with: "")
+        // Last resort: "Device" + MAC suffix
         return "Device (\(macSuffix))"
     }
 }

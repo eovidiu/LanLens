@@ -1,5 +1,23 @@
 import Foundation
 
+// Debug log to file for tracing
+private func debugLog(_ message: String) {
+    let logPath = "/tmp/lanlens_debug.log"
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(timestamp)] [Fingerbank] \(message)\n"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: logPath) {
+            if let handle = FileHandle(forWritingAtPath: logPath) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: URL(fileURLWithPath: logPath))
+        }
+    }
+}
+
 /// Service for querying the Fingerbank API for device identification
 public actor FingerbankService {
     public static let shared = FingerbankService()
@@ -42,16 +60,18 @@ public actor FingerbankService {
         userAgents: [String]? = nil,
         apiKey: String
     ) async throws -> DeviceFingerprint {
-        print("[Fingerbank] Interrogating MAC: \(mac)")
+        // Normalize MAC to standard format: XX:XX:XX:XX:XX:XX (uppercase with leading zeros)
+        let normalizedMAC = normalizeMACAddress(mac)
+        debugLog("Interrogating MAC: \(mac) -> normalized: \(normalizedMAC)")
 
         guard !apiKey.isEmpty else {
-            print("[Fingerbank] ERROR: No API key provided")
+            debugLog("ERROR: No API key provided")
             throw FingerbankError.noAPIKey
         }
 
         // Check rate limiting
         if let resetTime = rateLimitResetTime, Date() < resetTime {
-            print("[Fingerbank] ERROR: Rate limited until \(resetTime)")
+            debugLog("ERROR: Rate limited until \(resetTime)")
             throw FingerbankError.rateLimitExceeded(resetAt: resetTime)
         }
 
@@ -65,8 +85,8 @@ public actor FingerbankService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Build request body
-        var body: [String: Any] = ["mac": mac.uppercased()]
+        // Build request body with normalized MAC
+        var body: [String: Any] = ["mac": normalizedMAC]
         if let dhcp = dhcpFingerprint, !dhcp.isEmpty {
             body["dhcp_fingerprint"] = dhcp
         }
@@ -75,48 +95,48 @@ public actor FingerbankService {
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        print("[Fingerbank] Sending request to API...")
+        debugLog("Sending request to API for \(mac)...")
 
         do {
             let (data, response) = try await session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                print("[Fingerbank] ERROR: Non-HTTP response")
+                debugLog("ERROR: Non-HTTP response")
                 throw FingerbankError.invalidResponse
             }
 
-            print("[Fingerbank] HTTP \(httpResponse.statusCode)")
+            debugLog("HTTP \(httpResponse.statusCode) for \(mac)")
 
             // Handle response status
             switch httpResponse.statusCode {
             case 200...299:
                 let result = try parseResponse(data: data)
-                print("[Fingerbank] SUCCESS: \(result.fingerbankDeviceName ?? "unknown") (score: \(result.fingerbankScore ?? 0))")
+                debugLog("SUCCESS: \(result.fingerbankDeviceName ?? "unknown") (score: \(result.fingerbankScore ?? 0))")
                 return result
 
             case 401:
-                print("[Fingerbank] ERROR: Invalid API key (401)")
+                debugLog("ERROR: Invalid API key (401)")
                 throw FingerbankError.invalidAPIKey
 
             case 429:
                 // Rate limited - set reset time to 1 hour from now
                 let resetTime = Date().addingTimeInterval(3600)
                 rateLimitResetTime = resetTime
-                print("[Fingerbank] ERROR: Rate limited (429), reset at \(resetTime)")
+                debugLog("ERROR: Rate limited (429), reset at \(resetTime)")
                 throw FingerbankError.rateLimitExceeded(resetAt: resetTime)
 
             case 500...599:
-                print("[Fingerbank] ERROR: Server error (\(httpResponse.statusCode))")
+                debugLog("ERROR: Server error (\(httpResponse.statusCode))")
                 throw FingerbankError.serverError(statusCode: httpResponse.statusCode)
 
             default:
-                print("[Fingerbank] ERROR: Unexpected status (\(httpResponse.statusCode))")
+                debugLog("ERROR: Unexpected status (\(httpResponse.statusCode))")
                 throw FingerbankError.serverError(statusCode: httpResponse.statusCode)
             }
         } catch let error as FingerbankError {
             throw error
         } catch {
-            print("[Fingerbank] ERROR: Network error - \(error.localizedDescription)")
+            debugLog("ERROR: Network error - \(error.localizedDescription)")
             throw FingerbankError.networkError(error)
         }
     }
@@ -187,5 +207,33 @@ public actor FingerbankService {
             timestamp: Date(),
             cacheHit: false
         )
+    }
+
+    // MARK: - MAC Address Normalization
+
+    /// Normalizes a MAC address to standard format: XX:XX:XX:XX:XX:XX (uppercase with leading zeros)
+    /// Handles various input formats:
+    /// - 0:E:58:5C:0:7E -> 00:0E:58:5C:00:7E
+    /// - 00:0e:58:5c:00:7e -> 00:0E:58:5C:00:7E
+    /// - 00-0E-58-5C-00-7E -> 00:0E:58:5C:00:7E
+    private func normalizeMACAddress(_ mac: String) -> String {
+        // Split by common separators
+        let components: [String]
+        if mac.contains(":") {
+            components = mac.split(separator: ":").map(String.init)
+        } else if mac.contains("-") {
+            components = mac.split(separator: "-").map(String.init)
+        } else {
+            // No separator - assume it's already in some format, return as-is uppercase
+            return mac.uppercased()
+        }
+
+        // Pad each component to 2 characters with leading zero
+        let normalizedComponents = components.map { component -> String in
+            let upper = component.uppercased()
+            return upper.count == 1 ? "0\(upper)" : upper
+        }
+
+        return normalizedComponents.joined(separator: ":")
     }
 }

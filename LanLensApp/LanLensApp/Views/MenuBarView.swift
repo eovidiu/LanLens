@@ -210,7 +210,8 @@ private struct BottomBarView: View {
                 isScanning: appState.isScanning,
                 onScan: {
                     Task {
-                        await appState.runQuickScan()
+                        let apiKey = preferences.fingerbankEnabled ? preferences.fingerbankAPIKey : nil
+                        await appState.runQuickScan(fingerbankAPIKey: apiKey)
                     }
                 },
                 onStop: {

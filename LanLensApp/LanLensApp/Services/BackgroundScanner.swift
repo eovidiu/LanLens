@@ -58,8 +58,9 @@ final class BackgroundScanner {
                 continue
             }
 
-            // Run a quick scan
-            await appState.runQuickScan()
+            // Run a quick scan with Fingerbank if enabled
+            let apiKey = preferences.fingerbankEnabled ? preferences.fingerbankAPIKey : nil
+            await appState.runQuickScan(fingerbankAPIKey: apiKey)
 
             // Start passive discovery if enabled
             if preferences.passiveDiscoveryEnabled {

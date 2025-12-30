@@ -16,7 +16,8 @@ public actor ARPScanner {
 
     /// Get current ARP table entries
     public func getARPTable() async throws -> [ARPEntry] {
-        let result = try await shell.execute(path: "/usr/sbin/arp", arguments: ["-a"])
+        // Use -n to skip DNS resolution (5+ seconds -> ~10ms)
+        let result = try await shell.execute(path: "/usr/sbin/arp", arguments: ["-an"])
 
         guard result.succeeded else {
             throw ARPScannerError.commandFailed(result.stderr)

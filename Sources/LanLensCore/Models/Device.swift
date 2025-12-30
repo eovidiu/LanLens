@@ -60,7 +60,7 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         self.fingerprint = fingerprint
     }
 
-    /// Display name: user label > hostname > vendor + MAC suffix
+    /// Display name: user label > hostname > fingerprint name > vendor + MAC suffix
     public var displayName: String {
         if let label = userLabel, !label.isEmpty {
             return label
@@ -68,11 +68,16 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         if let hostname = hostname, !hostname.isEmpty {
             return hostname
         }
+        // Use Fingerbank device name if available
+        if let fingerbankName = fingerprint?.fingerbankDeviceName, !fingerbankName.isEmpty {
+            let suffix = String(mac.suffix(5)).replacingOccurrences(of: ":", with: "")
+            return "\(fingerbankName) (\(suffix))"
+        }
         let suffix = String(mac.suffix(5)).replacingOccurrences(of: ":", with: "")
         if let vendor = vendor {
             return "\(vendor) (\(suffix))"
         }
-        return "Device \(suffix)"
+        return "Device (\(suffix))"
     }
 
     public func hash(into hasher: inout Hasher) {

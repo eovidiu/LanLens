@@ -77,14 +77,50 @@ struct DeviceDetailView: View {
     }
 
     private var displayName: String {
-        if let label = device.userLabel, !label.isEmpty {
+        let dev = currentDevice
+
+        if let label = dev.userLabel, !label.isEmpty {
             return label
         }
-        if let hostname = device.hostname, !hostname.isEmpty {
+        if let hostname = dev.hostname, !hostname.isEmpty {
             return hostname.replacingOccurrences(of: ".local", with: "")
         }
-        if let vendor = device.vendor, !vendor.isEmpty {
+        // Check fingerprint for friendly name (UPnP)
+        if let friendlyName = dev.fingerprint?.friendlyName, !friendlyName.isEmpty {
+            return friendlyName
+        }
+        // Check Fingerbank device name - but prefer vendor if Fingerbank returns generic category
+        if let fingerbankName = dev.fingerprint?.fingerbankDeviceName, !fingerbankName.isEmpty {
+            // Generic category names to skip in favor of vendor
+            let genericCategories = [
+                "Audio, Imaging or Video Equipment",
+                "Generic Android",
+                "Generic Apple",
+                "Network Device",
+                "Unknown",
+                "IOT Device"
+            ]
+
+            let isGeneric = genericCategories.contains { fingerbankName.lowercased().contains($0.lowercased()) }
+
+            if !isGeneric {
+                return fingerbankName
+            }
+            // Fall through to vendor if generic
+        }
+        // Check fingerprint for manufacturer + model (UPnP)
+        if let manufacturer = dev.fingerprint?.manufacturer {
+            if let model = dev.fingerprint?.modelName {
+                return "\(manufacturer) \(model)"
+            }
+            return manufacturer
+        }
+        if let vendor = dev.vendor, !vendor.isEmpty {
             return "\(vendor) Device"
+        }
+        // Use Fingerbank name even if generic (better than nothing)
+        if let fingerbankName = dev.fingerprint?.fingerbankDeviceName, !fingerbankName.isEmpty {
+            return fingerbankName
         }
         return "Network Device"
     }

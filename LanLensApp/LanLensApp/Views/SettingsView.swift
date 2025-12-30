@@ -7,41 +7,68 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                GeneralSettingsSection()
-                APIServerSettingsSection(appState: appState, preferences: preferences)
-                ScanningSettingsSection(preferences: preferences)
-                FingerprintingSettingsSection(preferences: preferences)
-                NotificationSettingsSection(preferences: preferences)
-                AboutSection(appState: appState)
-                Spacer(minLength: 20)
+        VStack(spacing: 0) {
+            // Header matching DeviceDetailView style
+            SettingsHeader(onBack: { dismiss() })
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    GeneralSettingsSection()
+                    APIServerSettingsSection(appState: appState, preferences: preferences)
+                    ScanningSettingsSection(preferences: preferences)
+                    FingerprintingSettingsSection(preferences: preferences)
+                    NotificationSettingsSection(preferences: preferences)
+                    AboutSection(appState: appState)
+                    Spacer(minLength: 20)
+                }
+                .padding(16)
             }
-            .padding(16)
         }
         .frame(width: 340)
         .frame(minHeight: 300, maxHeight: 500)
         .background(Color.lanLensBackground)
-        .navigationTitle("Settings")
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.lanLensAccent)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.escape, modifiers: [])
-            }
+        .navigationBarBackButtonHidden(true)
+    }
+}
 
-            ToolbarItem(placement: .principal) {
-                Text("Settings")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+// MARK: - Settings Header
+
+private struct SettingsHeader: View {
+    let onBack: () -> Void
+
+    var body: some View {
+        HStack {
+            Button(action: onBack) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Back")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundStyle(Color.lanLensAccent)
             }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+
+            Spacer()
+
+            Text("Settings")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Spacer()
+
+            // Invisible spacer to center the title
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Back")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .opacity(0)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 }
 

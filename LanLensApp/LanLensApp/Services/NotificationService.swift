@@ -29,12 +29,15 @@ actor NotificationService {
             return
         }
 
+        // UNUserNotificationCenter.current() can crash in certain contexts
+        // (e.g., when running as a CLI tool or without proper setup)
+        // We defer this to avoid crashing the app on startup
         do {
-            let center = UNUserNotificationCenter.current()
-
-            // Set delegate on main thread as required by UNUserNotificationCenter
-            await MainActor.run {
-                center.delegate = delegateWrapper
+            // Get center on MainActor where UNUserNotificationCenter is safe
+            let center = await MainActor.run {
+                let c = UNUserNotificationCenter.current()
+                c.delegate = delegateWrapper
+                return c
             }
 
             let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])

@@ -5,6 +5,24 @@ import os.log
 
 private let logger = Logger(subsystem: "com.lanlens.app", category: "AppState")
 
+// Debug log to file for tracing
+private func appDebugLog(_ message: String) {
+    let logPath = "/tmp/lanlens_debug.log"
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(timestamp)] [AppState] \(message)\n"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: logPath) {
+            if let handle = FileHandle(forWritingAtPath: logPath) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: URL(fileURLWithPath: logPath))
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class AppState {
@@ -89,6 +107,7 @@ final class AppState {
 
         Task {
             await DiscoveryManager.shared.stopPassiveDiscovery()
+            await DiscoveryManager.shared.clearUpdateHandler()
             await MainActor.run {
                 self.isScanning = false
             }
@@ -117,19 +136,20 @@ final class AppState {
 
         Task {
             await DiscoveryManager.shared.stopPassiveDiscovery()
+            await DiscoveryManager.shared.clearUpdateHandler()
         }
 
         isScanning = false
         logger.info("Scanning stopped")
     }
 
-    func runQuickScan() async {
+    func runQuickScan(fingerbankAPIKey: String? = nil) async {
         // Cancel any existing scan
         currentScanTask?.cancel()
 
         // Create a new scan task that we can cancel
         currentScanTask = Task { @MainActor [weak self] in
-            await self?.performQuickScan()
+            await self?.performQuickScan(fingerbankAPIKey: fingerbankAPIKey)
         }
 
         // Wait for it to complete (or be cancelled)
@@ -137,10 +157,18 @@ final class AppState {
     }
 
     /// Internal implementation of quick scan with cancellation checkpoints.
-    private func performQuickScan() async {
+    /// - Parameter fingerbankAPIKey: Optional Fingerbank API key for device identification
+    private func performQuickScan(fingerbankAPIKey: String? = nil) async {
+        appDebugLog("Starting quick scan")
         logger.info("Starting quick scan")
         isScanning = true
         scanError = nil
+
+        // Configure Fingerbank API key if provided
+        if let key = fingerbankAPIKey, !key.isEmpty {
+            await DiscoveryManager.shared.setFingerbankAPIKey(key)
+            appDebugLog("Fingerbank API key configured")
+        }
 
         // Checkpoint: Check if cancelled before ARP scan
         guard !Task.isCancelled else {
@@ -167,12 +195,15 @@ final class AppState {
         }
 
         // Start passive discovery (SSDP + mDNS) to detect smart devices
+        appDebugLog("About to call startPassiveDiscovery...")
         logger.debug("Starting passive discovery (SSDP + mDNS)...")
         await DiscoveryManager.shared.startPassiveDiscovery { [weak self] device, updateType in
+            appDebugLog("Device update callback: \(device.ip) - \(device.hostname ?? "no hostname")")
             Task { @MainActor [weak self] in
                 self?.queueDeviceUpdate(device, type: updateType)
             }
         }
+        appDebugLog("startPassiveDiscovery returned")
 
         // Checkpoint: Check if cancelled before DNS-SD
         guard !Task.isCancelled else {
@@ -204,6 +235,10 @@ final class AppState {
         logger.debug("DNS-SD discovery completed")
 
         await refreshDevices()
+
+        // Clear the update handler now that we're done
+        await DiscoveryManager.shared.clearUpdateHandler()
+
         lastScanTime = Date()
         isScanning = false
         logger.info("Quick scan completed - total devices: \(self.devices.count)")
@@ -302,6 +337,10 @@ final class AppState {
         logger.debug("Port scan completed")
 
         await refreshDevices()
+
+        // Clear the update handler now that we're done
+        await DiscoveryManager.shared.clearUpdateHandler()
+
         lastScanTime = Date()
         isScanning = false
         logger.info("Full scan completed - total devices: \(self.devices.count)")
@@ -418,22 +457,29 @@ final class AppState {
     // MARK: - Private Helpers
 
     private func applyDeviceUpdate(_ device: Device, type: DiscoveryManager.UpdateType) {
+        logger.debug("applyDeviceUpdate: \(device.mac) type=\(String(describing: type)) hostname=\(device.hostname ?? "nil") deviceType=\(device.deviceType.rawValue)")
+
         switch type {
         case .discovered:
             if !devices.contains(where: { $0.mac == device.mac }) {
                 devices.append(device)
                 devices.sort { $0.smartScore > $1.smartScore }
+                logger.debug("  -> Added new device")
             }
         case .updated:
             if let index = devices.firstIndex(where: { $0.mac == device.mac }) {
+                let oldDevice = devices[index]
                 devices[index] = device
+                logger.debug("  -> Updated existing device (old hostname=\(oldDevice.hostname ?? "nil"), new hostname=\(device.hostname ?? "nil"))")
             } else {
                 devices.append(device)
                 devices.sort { $0.smartScore > $1.smartScore }
+                logger.debug("  -> Added as new (was update but not found)")
             }
         case .wentOffline:
             if let index = devices.firstIndex(where: { $0.mac == device.mac }) {
                 devices[index] = device
+                logger.debug("  -> Marked offline")
             }
         }
     }
