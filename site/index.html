@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lan Lens - Network Discovery for macOS</title>
+    <meta name="description" content="A native macOS menu bar app for discovering, identifying, and analyzing devices on your local network with security insights.">
+    <meta name="keywords" content="macOS, network scanner, device discovery, smart home, security, menu bar app">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Lan Lens - Network Discovery for macOS">
+    <meta property="og:description" content="See everything on your network. Security assessment, behavior tracking, and smart home protocol detection.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="assets/og-image.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #141414;
+            --bg-card: #1a1a1a;
+            --bg-card-hover: #222222;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --text-tertiary: #666666;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --border: #2a2a2a;
+            --radius: 12px;
+            --radius-lg: 16px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: rgba(10, 10, 10, 0.8);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+            font-size: 1.25rem;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--accent);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.9rem;
+            text-decoration: none;
+            transition: all 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--text-tertiary);
+        }
+
+        /* Hero */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 8rem 2rem 4rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 100px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        .hero-badge span {
+            color: var(--success);
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            max-width: 800px;
+        }
+
+        .hero h1 .gradient {
+            background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin-bottom: 2.5rem;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .hero-buttons .btn {
+            padding: 0.875rem 1.75rem;
+            font-size: 1rem;
+        }
+
+        .hero-image {
+            margin-top: 4rem;
+            max-width: 100%;
+            position: relative;
+        }
+
+        .hero-image img {
+            max-width: 800px;
+            width: 100%;
+            border-radius: var(--radius-lg);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border);
+        }
+
+        .app-preview {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            padding: 1rem;
+            border: 1px solid var(--border);
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        .app-preview-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1rem;
+        }
+
+        .app-preview-icon {
+            width: 24px;
+            height: 24px;
+            background: var(--accent);
+            border-radius: 6px;
+        }
+
+        .app-preview-title {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .app-preview-stats {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 1rem;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .stat-value.blue { color: var(--accent); }
+        .stat-value.green { color: var(--success); }
+        .stat-value.orange { color: var(--warning); }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .device-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .device-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border-left: 3px solid transparent;
+        }
+
+        .device-row.risk-high {
+            border-left-color: var(--danger);
+            background: rgba(239, 68, 68, 0.05);
+        }
+
+        .device-row.risk-medium {
+            border-left-color: var(--warning);
+        }
+
+        .device-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+        }
+
+        .device-info {
+            flex: 1;
+        }
+
+        .device-name {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .device-ip {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+        }
+
+        .device-badge {
+            font-size: 0.7rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
+        .badge-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
+        .badge-success {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--success);
+        }
+
+        /* Features */
+        .features {
+            padding: 6rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .section-header h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .section-header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 2rem;
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            border-color: var(--text-tertiary);
+            transform: translateY(-2px);
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .feature-icon.blue { background: rgba(59, 130, 246, 0.15); }
+        .feature-icon.green { background: rgba(34, 197, 94, 0.15); }
+        .feature-icon.purple { background: rgba(139, 92, 246, 0.15); }
+        .feature-icon.orange { background: rgba(245, 158, 11, 0.15); }
+        .feature-icon.red { background: rgba(239, 68, 68, 0.15); }
+        .feature-icon.cyan { background: rgba(6, 182, 212, 0.15); }
+
+        .feature-card h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        /* Fingerbank Section */
+        .fingerbank {
+            padding: 6rem 2rem;
+            background: var(--bg-secondary);
+        }
+
+        .fingerbank-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+        }
+
+        .fingerbank-content h2 {
+            font-size: 2.25rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+
+        .fingerbank-content p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .fingerbank-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .step {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+
+        .step-number {
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .step-content h4 {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .step-content p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin: 0;
+        }
+
+        .fingerbank-visual {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 2rem;
+        }
+
+        .fingerbank-demo {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .demo-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .demo-icon {
+            font-size: 1.5rem;
+        }
+
+        .demo-title {
+            font-weight: 600;
+        }
+
+        .demo-subtitle {
+            font-size: 0.85rem;
+            color: var(--text-tertiary);
+        }
+
+        .demo-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+        }
+
+        .demo-label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .demo-value {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .demo-value.highlight {
+            color: var(--success);
+        }
+
+        .confidence-bar {
+            height: 4px;
+            background: var(--bg-secondary);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 0.5rem;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: var(--success);
+            border-radius: 2px;
+            width: 92%;
+        }
+
+        /* How it works */
+        .how-it-works {
+            padding: 6rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .workflow {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+
+        .workflow-step {
+            text-align: center;
+            position: relative;
+        }
+
+        .workflow-step::after {
+            content: '';
+            position: absolute;
+            top: 2rem;
+            right: -1rem;
+            width: calc(100% - 4rem);
+            height: 2px;
+            background: var(--border);
+        }
+
+        .workflow-step:last-child::after {
+            display: none;
+        }
+
+        .workflow-icon {
+            width: 64px;
+            height: 64px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.75rem;
+            margin: 0 auto 1rem;
+        }
+
+        .workflow-step h4 {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .workflow-step p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        /* CTA */
+        .cta {
+            padding: 6rem 2rem;
+            text-align: center;
+            background: var(--bg-secondary);
+        }
+
+        .cta h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .cta p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            margin-bottom: 2rem;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .cta .btn {
+            padding: 1rem 2rem;
+            font-size: 1rem;
+        }
+
+        /* Footer */
+        footer {
+            padding: 3rem 2rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .footer-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .footer-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: var(--text-primary);
+        }
+
+        .footer-copy {
+            color: var(--text-tertiary);
+            font-size: 0.85rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .fingerbank-container {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+
+            .workflow {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .workflow-step::after {
+                display: none;
+            }
+
+            .nav-links {
+                display: none;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .workflow {
+                grid-template-columns: 1fr;
+            }
+
+            .hero h1 {
+                font-size: 2rem;
+            }
+
+            .hero p {
+                font-size: 1rem;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-container">
+            <a href="#" class="logo">
+                <div class="logo-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.3-4.3"></path>
+                    </svg>
+                </div>
+                Lan Lens
+            </a>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#fingerbank">Fingerbank</a>
+                <a href="#how-it-works">How it works</a>
+                <a href="https://github.com/eovidiu/LanLens" target="_blank">GitHub</a>
+                <a href="https://github.com/eovidiu/LanLens/releases" class="btn btn-primary">Download</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="hero-badge">
+            <span>&#10003;</span> Free &amp; Open Source
+        </div>
+        <h1>See <span class="gradient">Everything</span> on Your Network</h1>
+        <p>A native macOS menu bar app for discovering devices, assessing security risks, and detecting smart home protocols.</p>
+        <div class="hero-buttons">
+            <a href="https://github.com/eovidiu/LanLens/releases" class="btn btn-primary">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download for macOS
+            </a>
+            <a href="https://github.com/eovidiu/LanLens" class="btn btn-secondary">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+                View on GitHub
+            </a>
+        </div>
+
+        <div class="hero-image">
+            <div class="app-preview">
+                <div class="app-preview-header">
+                    <div class="app-preview-icon"></div>
+                    <span class="app-preview-title">Lan Lens</span>
+                </div>
+                <div class="app-preview-stats">
+                    <div class="stat">
+                        <div class="stat-value blue">12</div>
+                        <div class="stat-label">Devices</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value green">8</div>
+                        <div class="stat-label">Smart</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value orange">2</div>
+                        <div class="stat-label">Issues</div>
+                    </div>
+                </div>
+                <div class="device-list">
+                    <div class="device-row risk-high">
+                        <div class="device-icon">📹</div>
+                        <div class="device-info">
+                            <div class="device-name">IP Camera</div>
+                            <div class="device-ip">192.168.1.45 &bull; Hikvision</div>
+                        </div>
+                        <span class="device-badge badge-danger">Critical</span>
+                    </div>
+                    <div class="device-row">
+                        <div class="device-icon">📺</div>
+                        <div class="device-info">
+                            <div class="device-name">Living Room TV</div>
+                            <div class="device-ip">192.168.1.32 &bull; Samsung</div>
+                        </div>
+                        <span class="device-badge badge-success">AirPlay</span>
+                    </div>
+                    <div class="device-row risk-medium">
+                        <div class="device-icon">🔊</div>
+                        <div class="device-info">
+                            <div class="device-name">Sonos One</div>
+                            <div class="device-ip">192.168.1.28 &bull; Sonos</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features" id="features">
+        <div class="section-header">
+            <h2>Powerful Network Intelligence</h2>
+            <p>Deep insights into every device on your network, from security risks to smart home capabilities.</p>
+        </div>
+
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon red">🛡️</div>
+                <h3>Security Assessment</h3>
+                <p>Automatic risk scoring identifies vulnerable devices with risky open ports, missing encryption, or outdated firmware.</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon blue">🔍</div>
+                <h3>Deep Scan</h3>
+                <p>Probe devices for open ports, grab service banners, and detect exact software versions running on your network.</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon purple">📊</div>
+                <h3>Behavior Tracking</h3>
+                <p>Learn device patterns over time. Distinguish always-on infrastructure from mobile devices and guests.</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon green">📡</div>
+                <h3>Protocol Detection</h3>
+                <p>Detect AirPlay, Google Cast, HomeKit, and RAOP capabilities by parsing mDNS TXT records.</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon orange">🏭</div>
+                <h3>MAC Analysis</h3>
+                <p>Identify vendors with confidence scoring, detect virtual machines, and spot randomized MAC addresses.</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon cyan">🖥️</div>
+                <h3>Native macOS</h3>
+                <p>Lives in your menu bar. Clean, dark interface that feels right at home on your Mac. Keyboard shortcuts included.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Fingerbank Integration -->
+    <section class="fingerbank" id="fingerbank">
+        <div class="fingerbank-container">
+            <div class="fingerbank-content">
+                <h2>Supercharge with Fingerbank</h2>
+                <p>Enable Level 2 device fingerprinting with a free Fingerbank API key. Get precise device identification from the world's largest MAC address database.</p>
+
+                <div class="fingerbank-steps">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h4>Get a Free API Key</h4>
+                            <p>Sign up at fingerbank.org for free access</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h4>Enable in Settings</h4>
+                            <p>Open Lan Lens Settings and enter your key</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h4>See the Magic</h4>
+                            <p>Devices are identified with up to 95% confidence</p>
+                        </div>
+                    </div>
+                </div>
+
+                <a href="https://fingerbank.org" target="_blank" class="btn btn-primary">
+                    Get Free API Key
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                </a>
+            </div>
+
+            <div class="fingerbank-visual">
+                <div class="fingerbank-demo">
+                    <div class="demo-header">
+                        <span class="demo-icon">📱</span>
+                        <div>
+                            <div class="demo-title">iPhone 15 Pro</div>
+                            <div class="demo-subtitle">Identified via Fingerbank</div>
+                        </div>
+                    </div>
+                    <div class="demo-row">
+                        <span class="demo-label">Device</span>
+                        <span class="demo-value">Apple iPhone 15 Pro</span>
+                    </div>
+                    <div class="demo-row">
+                        <span class="demo-label">Manufacturer</span>
+                        <span class="demo-value">Apple Inc.</span>
+                    </div>
+                    <div class="demo-row">
+                        <span class="demo-label">Category</span>
+                        <span class="demo-value">Mobile Phone</span>
+                    </div>
+                    <div class="demo-row">
+                        <span class="demo-label">Source</span>
+                        <span class="demo-value highlight">UPnP + Fingerbank</span>
+                    </div>
+                    <div class="demo-row">
+                        <span class="demo-label">Confidence</span>
+                        <span class="demo-value highlight">92%</span>
+                    </div>
+                    <div class="confidence-bar">
+                        <div class="confidence-fill"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="how-it-works" id="how-it-works">
+        <div class="section-header">
+            <h2>How It Works</h2>
+            <p>Lan Lens uses multiple discovery protocols to build a complete picture of your network.</p>
+        </div>
+
+        <div class="workflow">
+            <div class="workflow-step">
+                <div class="workflow-icon">📡</div>
+                <h4>Discover</h4>
+                <p>ARP, mDNS, SSDP, and DNS-SD protocols find all devices</p>
+            </div>
+            <div class="workflow-step">
+                <div class="workflow-icon">🔎</div>
+                <h4>Identify</h4>
+                <p>UPnP and Fingerbank reveal device types and manufacturers</p>
+            </div>
+            <div class="workflow-step">
+                <div class="workflow-icon">🔬</div>
+                <h4>Analyze</h4>
+                <p>Port scanning and banner grabbing detect services</p>
+            </div>
+            <div class="workflow-step">
+                <div class="workflow-icon">📊</div>
+                <h4>Report</h4>
+                <p>Security scores and behavior patterns give you insights</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta">
+        <h2>Ready to See Your Network?</h2>
+        <p>Download Lan Lens for free and discover what's connected.</p>
+        <div class="cta-buttons">
+            <a href="https://github.com/eovidiu/LanLens/releases" class="btn btn-primary">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download for macOS 14+
+            </a>
+            <a href="https://github.com/eovidiu/LanLens" class="btn btn-secondary">
+                View Source on GitHub
+            </a>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-container">
+            <div class="footer-links">
+                <a href="https://github.com/eovidiu/LanLens">GitHub</a>
+                <a href="https://github.com/eovidiu/LanLens/blob/main/README.md">Documentation</a>
+                <a href="https://github.com/eovidiu/LanLens/issues">Issues</a>
+                <a href="https://fingerbank.org">Fingerbank</a>
+            </div>
+            <div class="footer-copy">
+                &copy; 2025 Lan Lens. MIT License.
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
