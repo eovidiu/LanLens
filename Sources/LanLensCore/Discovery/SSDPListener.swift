@@ -1,26 +1,5 @@
 import Foundation
 import Network
-import os.log
-
-private let logger = Logger(subsystem: "com.lanlens.core", category: "SSDPListener")
-
-// Debug log to file for tracing
-private func ssdpDebugLog(_ message: String) {
-    let logPath = "/tmp/lanlens_debug.log"
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] [SSDP] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logPath) {
-            if let handle = FileHandle(forWritingAtPath: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            try? data.write(to: URL(fileURLWithPath: logPath))
-        }
-    }
-}
 
 /// Listens for SSDP (Simple Service Discovery Protocol) announcements
 /// Used by UPnP devices to advertise themselves
@@ -62,21 +41,21 @@ public actor SSDPListener {
     /// Start listening for SSDP announcements
     public func start(onDiscovered: @escaping DeviceHandler) async {
         guard !isRunning else {
-            ssdpDebugLog("Already running, skipping start")
+            Log.debug("Already running, skipping start", category: .ssdp)
             return
         }
-        ssdpDebugLog("Starting SSDP listener...")
+        Log.info("Starting SSDP listener...", category: .ssdp)
         isRunning = true
         onDeviceDiscovered = onDiscovered
 
         // Start passive listening
-        ssdpDebugLog("Joining multicast group 239.255.255.250:1900...")
+        Log.debug("Joining multicast group 239.255.255.250:1900...", category: .ssdp)
         startListening()
 
         // Send M-SEARCH to discover existing devices and wait for responses
-        ssdpDebugLog("Sending M-SEARCH discovery request...")
+        Log.debug("Sending M-SEARCH discovery request...", category: .ssdp)
         await sendMSearch()
-        ssdpDebugLog("M-SEARCH discovery complete")
+        Log.debug("M-SEARCH discovery complete", category: .ssdp)
     }
 
     /// Stop listening
@@ -166,7 +145,7 @@ public actor SSDPListener {
                 group.start(queue: .global(qos: .utility))
             }
         } catch {
-            logger.error("Failed to start SSDP listener: \(error.localizedDescription)")
+            Log.error("Failed to start SSDP listener: \(error.localizedDescription)", category: .ssdp)
         }
     }
 
@@ -228,7 +207,7 @@ public actor SSDPListener {
         // Sonos devices send many SSDP messages with different USNs for each service
         if let ip = hostIP, !discoveredIPs.contains(ip) {
             discoveredIPs.insert(ip)
-            ssdpDebugLog("New device: IP=\(ip) Server=\(headers["SERVER"] ?? "?")")
+            Log.info("New device: IP=\(ip) Server=\(headers["SERVER"] ?? "?")", category: .ssdp)
             onDeviceDiscovered?(device)
         }
     }

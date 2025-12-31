@@ -5,24 +5,6 @@ import os.log
 
 private let logger = Logger(subsystem: "com.lanlens.app", category: "AppState")
 
-// Debug log to file for tracing
-private func appDebugLog(_ message: String) {
-    let logPath = "/tmp/lanlens_debug.log"
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] [AppState] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logPath) {
-            if let handle = FileHandle(forWritingAtPath: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            try? data.write(to: URL(fileURLWithPath: logPath))
-        }
-    }
-}
-
 @Observable
 @MainActor
 final class AppState {
@@ -159,7 +141,7 @@ final class AppState {
     /// Internal implementation of quick scan with cancellation checkpoints.
     /// - Parameter fingerbankAPIKey: Optional Fingerbank API key for device identification
     private func performQuickScan(fingerbankAPIKey: String? = nil) async {
-        appDebugLog("Starting quick scan")
+        Log.info("Starting quick scan", category: .state)
         logger.info("Starting quick scan")
         isScanning = true
         scanError = nil
@@ -167,7 +149,7 @@ final class AppState {
         // Configure Fingerbank API key if provided
         if let key = fingerbankAPIKey, !key.isEmpty {
             await DiscoveryManager.shared.setFingerbankAPIKey(key)
-            appDebugLog("Fingerbank API key configured")
+            Log.debug("Fingerbank API key configured", category: .state)
         }
 
         // Checkpoint: Check if cancelled before ARP scan
@@ -195,15 +177,15 @@ final class AppState {
         }
 
         // Start passive discovery (SSDP + mDNS) to detect smart devices
-        appDebugLog("About to call startPassiveDiscovery...")
+        Log.debug("About to call startPassiveDiscovery...", category: .state)
         logger.debug("Starting passive discovery (SSDP + mDNS)...")
         await DiscoveryManager.shared.startPassiveDiscovery { [weak self] device, updateType in
-            appDebugLog("Device update callback: \(device.ip) - \(device.hostname ?? "no hostname")")
+            Log.debug("Device update callback: \(device.ip) - \(device.hostname ?? "no hostname")", category: .state)
             Task { @MainActor [weak self] in
                 self?.queueDeviceUpdate(device, type: updateType)
             }
         }
-        appDebugLog("startPassiveDiscovery returned")
+        Log.debug("startPassiveDiscovery returned", category: .state)
 
         // Checkpoint: Check if cancelled before DNS-SD
         guard !Task.isCancelled else {

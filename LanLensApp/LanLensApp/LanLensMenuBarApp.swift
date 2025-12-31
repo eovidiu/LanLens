@@ -14,6 +14,8 @@ struct LanLensMenuBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
+        // Initialize file-based logging for Claude Code debugging
+        initializeLogging()
         appLogger.info("LanLensMenuBarApp init called")
     }
 

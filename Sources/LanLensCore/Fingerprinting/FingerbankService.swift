@@ -1,23 +1,5 @@
 import Foundation
 
-// Debug log to file for tracing
-private func debugLog(_ message: String) {
-    let logPath = "/tmp/lanlens_debug.log"
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] [Fingerbank] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logPath) {
-            if let handle = FileHandle(forWritingAtPath: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            try? data.write(to: URL(fileURLWithPath: logPath))
-        }
-    }
-}
-
 /// Service for querying the Fingerbank API for device identification
 public actor FingerbankService {
     public static let shared = FingerbankService()
@@ -62,16 +44,16 @@ public actor FingerbankService {
     ) async throws -> DeviceFingerprint {
         // Normalize MAC to standard format: XX:XX:XX:XX:XX:XX (uppercase with leading zeros)
         let normalizedMAC = normalizeMACAddress(mac)
-        debugLog("Interrogating MAC: \(mac) -> normalized: \(normalizedMAC)")
+        Log.debug("Interrogating MAC: \(mac) -> normalized: \(normalizedMAC)", category: .fingerprinting)
 
         guard !apiKey.isEmpty else {
-            debugLog("ERROR: No API key provided")
+            Log.error("No API key provided", category: .fingerprinting)
             throw FingerbankError.noAPIKey
         }
 
         // Check rate limiting
         if let resetTime = rateLimitResetTime, Date() < resetTime {
-            debugLog("ERROR: Rate limited until \(resetTime)")
+            Log.warning("Rate limited until \(resetTime)", category: .fingerprinting)
             throw FingerbankError.rateLimitExceeded(resetAt: resetTime)
         }
 
@@ -95,48 +77,48 @@ public actor FingerbankService {
         }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        debugLog("Sending request to API for \(mac)...")
+        Log.debug("Sending request to API for \(mac)...", category: .fingerprinting)
 
         do {
             let (data, response) = try await session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                debugLog("ERROR: Non-HTTP response")
+                Log.error("Non-HTTP response", category: .fingerprinting)
                 throw FingerbankError.invalidResponse
             }
 
-            debugLog("HTTP \(httpResponse.statusCode) for \(mac)")
+            Log.debug("HTTP \(httpResponse.statusCode) for \(mac)", category: .fingerprinting)
 
             // Handle response status
             switch httpResponse.statusCode {
             case 200...299:
                 let result = try parseResponse(data: data)
-                debugLog("SUCCESS: \(result.fingerbankDeviceName ?? "unknown") (score: \(result.fingerbankScore ?? 0))")
+                Log.info("SUCCESS: \(result.fingerbankDeviceName ?? "unknown") (score: \(result.fingerbankScore ?? 0))", category: .fingerprinting)
                 return result
 
             case 401:
-                debugLog("ERROR: Invalid API key (401)")
+                Log.error("Invalid API key (401)", category: .fingerprinting)
                 throw FingerbankError.invalidAPIKey
 
             case 429:
                 // Rate limited - set reset time to 1 hour from now
                 let resetTime = Date().addingTimeInterval(3600)
                 rateLimitResetTime = resetTime
-                debugLog("ERROR: Rate limited (429), reset at \(resetTime)")
+                Log.warning("Rate limited (429), reset at \(resetTime)", category: .fingerprinting)
                 throw FingerbankError.rateLimitExceeded(resetAt: resetTime)
 
             case 500...599:
-                debugLog("ERROR: Server error (\(httpResponse.statusCode))")
+                Log.error("Server error (\(httpResponse.statusCode))", category: .fingerprinting)
                 throw FingerbankError.serverError(statusCode: httpResponse.statusCode)
 
             default:
-                debugLog("ERROR: Unexpected status (\(httpResponse.statusCode))")
+                Log.error("Unexpected status (\(httpResponse.statusCode))", category: .fingerprinting)
                 throw FingerbankError.serverError(statusCode: httpResponse.statusCode)
             }
         } catch let error as FingerbankError {
             throw error
         } catch {
-            debugLog("ERROR: Network error - \(error.localizedDescription)")
+            Log.error("Network error - \(error.localizedDescription)", category: .network)
             throw FingerbankError.networkError(error)
         }
     }

@@ -1,0 +1,167 @@
+import Foundation
+import GRDB
+
+// MARK: - Database Protocol
+
+/// Protocol for database operations, enabling testability
+public protocol DatabaseProtocol: Sendable {
+    /// Execute a read operation
+    func read<T: Sendable>(_ block: @Sendable @escaping (GRDB.Database) throws -> T) async throws -> T
+    
+    /// Execute a write operation
+    func write<T: Sendable>(_ block: @Sendable @escaping (GRDB.Database) throws -> T) async throws -> T
+}
+
+// MARK: - Database Errors
+
+public enum DatabaseError: Error, Sendable {
+    case initializationFailed(String)
+    case migrationFailed(String)
+    case invalidPath
+    case connectionClosed
+}
+
+// MARK: - Database Manager
+
+/// GRDB-based database manager for LanLens device persistence
+public final class DatabaseManager: DatabaseProtocol, @unchecked Sendable {
+    
+    /// Shared instance for production use
+    public static let shared: DatabaseManager = {
+        do {
+            return try DatabaseManager()
+        } catch {
+            fatalError("Failed to initialize database: \(error)")
+        }
+    }()
+    
+    /// The underlying GRDB database pool
+    private let dbPool: DatabasePool
+    
+    /// Current schema version
+    private static let schemaVersion = 1
+    
+    // MARK: - Initialization
+    
+    /// Initialize with the default database path
+    public convenience init() throws {
+        let path = try Self.defaultDatabasePath()
+        try self.init(path: path)
+    }
+    
+    /// Initialize with a custom database path
+    public init(path: String) throws {
+        // Create directory if needed
+        let directory = (path as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        
+        // Configure database
+        var config = Configuration()
+        config.prepareDatabase { db in
+            // Enable foreign keys
+            db.trace { print("SQL: \($0)") }
+        }
+        
+        // Open database pool
+        dbPool = try DatabasePool(path: path, configuration: config)
+        
+        // Run migrations
+        try runMigrations()
+    }
+    
+    /// Initialize with an in-memory database (for testing)
+    public init(inMemory: Bool) throws {
+        guard inMemory else {
+            throw DatabaseError.invalidPath
+        }
+        
+        var config = Configuration()
+        config.prepareDatabase { db in
+            // SQLite in-memory databases are destroyed when the connection closes
+        }
+        
+        dbPool = try DatabasePool(path: ":memory:", configuration: config)
+        try runMigrations()
+    }
+    
+    // MARK: - Database Path
+    
+    /// Returns the default database path in Application Support
+    public static func defaultDatabasePath() throws -> String {
+        let fileManager = FileManager.default
+        
+        guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            throw DatabaseError.initializationFailed("Could not find Application Support directory")
+        }
+        
+        let lanLensDir = appSupport.appendingPathComponent("LanLens", isDirectory: true)
+        return lanLensDir.appendingPathComponent("devices.sqlite").path
+    }
+    
+    // MARK: - Migrations
+    
+    private func runMigrations() throws {
+        var migrator = DatabaseMigrator()
+        
+        // Version 1: Initial schema
+        migrator.registerMigration("v1_initial") { db in
+            // Create devices table
+            try db.create(table: "devices", ifNotExists: true) { t in
+                t.column("mac", .text).primaryKey()
+                t.column("id", .text).notNull()
+                t.column("ip", .text).notNull()
+                t.column("hostname", .text)
+                t.column("vendor", .text)
+                t.column("firstSeen", .datetime).notNull()
+                t.column("lastSeen", .datetime).notNull()
+                t.column("isOnline", .boolean).notNull().defaults(to: true)
+                t.column("smartScore", .integer).notNull().defaults(to: 0)
+                t.column("deviceType", .text).notNull().defaults(to: "unknown")
+                t.column("userLabel", .text)
+                t.column("openPorts", .text).notNull().defaults(to: "[]")
+                t.column("services", .text).notNull().defaults(to: "[]")
+                t.column("httpInfo", .text)
+                t.column("smartSignals", .text).notNull().defaults(to: "[]")
+                t.column("fingerprint", .text)
+            }
+            
+            // Create indexes for common queries
+            try db.create(index: "idx_devices_ip", on: "devices", columns: ["ip"])
+            try db.create(index: "idx_devices_lastSeen", on: "devices", columns: ["lastSeen"])
+            try db.create(index: "idx_devices_isOnline", on: "devices", columns: ["isOnline"])
+        }
+        
+        // Apply migrations
+        try migrator.migrate(dbPool)
+    }
+    
+    // MARK: - DatabaseProtocol
+    
+    public func read<T: Sendable>(_ block: @Sendable @escaping (GRDB.Database) throws -> T) async throws -> T {
+        try await dbPool.read(block)
+    }
+    
+    public func write<T: Sendable>(_ block: @Sendable @escaping (GRDB.Database) throws -> T) async throws -> T {
+        try await dbPool.write(block)
+    }
+    
+    // MARK: - Utility
+    
+    /// Delete the database file (useful for testing or reset)
+    public static func deleteDatabase() throws {
+        let path = try defaultDatabasePath()
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: path) {
+            try fileManager.removeItem(atPath: path)
+        }
+        // Also remove WAL and SHM files
+        let walPath = path + "-wal"
+        let shmPath = path + "-shm"
+        if fileManager.fileExists(atPath: walPath) {
+            try fileManager.removeItem(atPath: walPath)
+        }
+        if fileManager.fileExists(atPath: shmPath) {
+            try fileManager.removeItem(atPath: shmPath)
+        }
+    }
+}

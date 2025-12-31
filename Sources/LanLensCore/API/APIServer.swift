@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import os
 
 /// REST API server for LanLens
 public struct APIServer: Sendable {
@@ -18,18 +19,34 @@ public struct APIServer: Sendable {
     }
 
     private let config: Config
+    private let serverState: ServerState
 
     public init(config: Config = Config()) {
         self.config = config
+        self.serverState = ServerState()
     }
 
     /// Build the router with all routes
     public func buildRouter() -> Router<BasicRequestContext> {
         let router = Router()
+        let state = self.serverState
 
-        // Health check
-        router.get("/health") { _, _ -> String in
-            return "{\"status\":\"ok\"}"
+        // Health check - returns detailed server status
+        router.get("/health") { _, _ -> Response in
+            let uptime = Int(Date().timeIntervalSince(state.startTime))
+            let deviceCount = await DiscoveryManager.shared.getDeviceCount()
+            let isScanning = await DiscoveryManager.shared.isDiscovering()
+            let lastScanTime = state.getLastScanTime()
+
+            let response = HealthResponse(
+                status: "healthy",
+                version: "1.0.0",
+                uptime: uptime,
+                deviceCount: deviceCount,
+                isScanning: isScanning,
+                lastScanTime: lastScanTime
+            )
+            return try encodeJSON(response)
         }
 
         // Device endpoints
@@ -59,6 +76,7 @@ public struct APIServer: Sendable {
         router.get("/api/discover/arp") { _, _ -> Response in
             do {
                 let devices = try await DiscoveryManager.shared.getARPDevices()
+                state.setLastScanTime(Date())
                 return try encodeJSON(devices)
             } catch {
                 return Response(
@@ -85,6 +103,7 @@ public struct APIServer: Sendable {
             try? await Task.sleep(for: .seconds(duration))
             await DiscoveryManager.shared.stopPassiveDiscovery()
 
+            state.setLastScanTime(Date())
             let devices = await collector.getAll()
             return try encodeJSON(DiscoveryResult(discovered: devices.count, devices: devices))
         }
@@ -101,6 +120,7 @@ public struct APIServer: Sendable {
                 }
             }
 
+            state.setLastScanTime(Date())
             let devices = await collector.getAll()
             return try encodeJSON(DiscoveryResult(discovered: devices.count, devices: devices))
         }
@@ -112,6 +132,7 @@ public struct APIServer: Sendable {
             }
 
             if let device = await DiscoveryManager.shared.scanPorts(for: mac) {
+                state.setLastScanTime(Date())
                 return try encodeJSON(device)
             }
             return Response(status: .notFound)
@@ -119,12 +140,14 @@ public struct APIServer: Sendable {
 
         router.post("/api/scan/quick") { _, _ -> Response in
             await DiscoveryManager.shared.quickScanAllDevices()
+            state.setLastScanTime(Date())
             let devices = await DiscoveryManager.shared.getAllDevices()
             return try encodeJSON(devices)
         }
 
         router.post("/api/scan/full") { _, _ -> Response in
             await DiscoveryManager.shared.fullScanAllDevices()
+            state.setLastScanTime(Date())
             let devices = await DiscoveryManager.shared.getAllDevices()
             return try encodeJSON(devices)
         }
@@ -177,7 +200,39 @@ public struct APIServer: Sendable {
     }
 }
 
+// MARK: - Server State
+
+/// Tracks server state across requests (thread-safe)
+final class ServerState: Sendable {
+    let startTime: Date
+
+    private let _lastScanTime: OSAllocatedUnfairLock<Date?>
+
+    init() {
+        self.startTime = Date()
+        self._lastScanTime = OSAllocatedUnfairLock(initialState: nil)
+    }
+
+    func getLastScanTime() -> Date? {
+        _lastScanTime.withLock { $0 }
+    }
+
+    func setLastScanTime(_ date: Date) {
+        _lastScanTime.withLock { $0 = date }
+    }
+}
+
 // MARK: - Response Models
+
+/// Health check response
+struct HealthResponse: Codable, Sendable {
+    let status: String
+    let version: String
+    let uptime: Int
+    let deviceCount: Int
+    let isScanning: Bool
+    let lastScanTime: Date?
+}
 
 struct DiscoveryResult: Codable, Sendable {
     let discovered: Int

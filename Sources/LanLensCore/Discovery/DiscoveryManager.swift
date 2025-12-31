@@ -1,25 +1,4 @@
 import Foundation
-import os.log
-
-private let logger = Logger(subsystem: "com.lanlens.core", category: "DiscoveryManager")
-
-// Debug log to file for tracing
-private func debugLog(_ message: String) {
-    let logPath = "/tmp/lanlens_debug.log"
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logPath) {
-            if let handle = FileHandle(forWritingAtPath: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            try? data.write(to: URL(fileURLWithPath: logPath))
-        }
-    }
-}
 
 /// Orchestrates all discovery methods and maintains device list
 public actor DiscoveryManager {
@@ -45,21 +24,21 @@ public actor DiscoveryManager {
     /// Configure Fingerbank API key for device identification
     public func setFingerbankAPIKey(_ key: String?) {
         self.fingerbankAPIKey = key
-        debugLog("Fingerbank API key \(key != nil ? "configured" : "cleared")")
+        Log.info("Fingerbank API key \(key != nil ? "configured" : "cleared")", category: .discovery)
     }
 
     /// Start passive discovery (mDNS + SSDP)
     public func startPassiveDiscovery(onUpdate: @escaping DeviceUpdateHandler) async {
         guard !isRunning else {
-            debugLog("Passive discovery already running, skipping")
+            Log.debug("Passive discovery already running, skipping", category: .discovery)
             return
         }
-        debugLog("Starting passive discovery (mDNS + SSDP)...")
+        Log.info("Starting passive discovery (mDNS + SSDP)...", category: .discovery)
         isRunning = true
         onDeviceUpdate = onUpdate
 
         // Start mDNS listener
-        debugLog("Starting mDNS listener...")
+        Log.debug("Starting mDNS listener...", category: .mdns)
         await MDNSListener.shared.start { [weak self] service in
             Task { [weak self] in
                 await self?.handleMDNSService(service)
@@ -67,14 +46,14 @@ public actor DiscoveryManager {
         }
 
         // Start SSDP listener
-        debugLog("Starting SSDP listener...")
+        Log.debug("Starting SSDP listener...", category: .ssdp)
         await SSDPListener.shared.start { [weak self] device in
-            debugLog("SSDP callback triggered for device at \(device.hostIP ?? "unknown")")
+            Log.debug("SSDP callback triggered for device at \(device.hostIP ?? "unknown")", category: .ssdp)
             Task { [weak self] in
                 await self?.handleSSDPDevice(device)
             }
         }
-        debugLog("Passive discovery started successfully")
+        Log.info("Passive discovery started successfully", category: .discovery)
     }
 
     /// Stop passive discovery
@@ -155,7 +134,7 @@ public actor DiscoveryManager {
 
         guard !macsNeedingFingerprint.isEmpty else { return }
 
-        debugLog("Fingerprinting \(macsNeedingFingerprint.count) ARP devices via Fingerbank...")
+        Log.info("Fingerprinting \(macsNeedingFingerprint.count) ARP devices via Fingerbank...", category: .fingerprinting)
 
         // Process devices
         for mac in macsNeedingFingerprint {
@@ -172,7 +151,7 @@ public actor DiscoveryManager {
 
         guard let apiKey = fingerbankAPIKey, !apiKey.isEmpty else { return }
 
-        debugLog("Fingerbank lookup for ARP device: \(mac)")
+        Log.debug("Fingerbank lookup for ARP device: \(mac)", category: .fingerprinting)
 
         let fingerprint = await DeviceFingerprintManager.shared.fingerprintDevice(
             device: device,
@@ -181,7 +160,7 @@ public actor DiscoveryManager {
         )
 
         if let fp = fingerprint {
-            debugLog("Fingerbank result for \(mac): \(fp.fingerbankDeviceName ?? "unknown")")
+            Log.info("Fingerbank result for \(mac): \(fp.fingerbankDeviceName ?? "unknown")", category: .fingerprinting)
 
             device.fingerprint = fp
 
@@ -209,6 +188,16 @@ public actor DiscoveryManager {
     /// Get device by MAC
     public func getDevice(mac: String) -> Device? {
         devices[mac.uppercased()]
+    }
+
+    /// Check if passive discovery is currently running
+    public func isDiscovering() -> Bool {
+        isRunning
+    }
+
+    /// Get total device count
+    public func getDeviceCount() -> Int {
+        devices.count
     }
 
     /// Scan ports for a specific device
@@ -336,22 +325,22 @@ public actor DiscoveryManager {
 
     private func handleDNSSDService(_ service: DNSSDScanner.DNSSDService) async {
         guard let ip = service.ip else {
-            logger.debug("DNS-SD: No IP for service \(service.name), skipping")
+            Log.debug("DNS-SD: No IP for service \(service.name), skipping", category: .discovery)
             return
         }
 
-        logger.info("DNS-SD: Processing service \(service.name) at \(ip)")
-        logger.debug("DNS-SD: hostname=\(service.hostName ?? "nil") type=\(service.type)")
+        Log.info("DNS-SD: Processing service \(service.name) at \(ip)", category: .discovery)
+        Log.debug("DNS-SD: hostname=\(service.hostName ?? "nil") type=\(service.type)", category: .discovery)
 
         // Find MAC for this IP from ARP table
         if let entries = try? await ARPScanner.shared.getARPTable() {
             if let entry = entries.first(where: { $0.ip == ip }) {
-                logger.info("DNS-SD: Found MAC \(entry.mac) for IP \(ip)")
+                Log.info("DNS-SD: Found MAC \(entry.mac) for IP \(ip)", category: .discovery)
                 var device = await updateOrCreateDevice(mac: entry.mac, ip: ip, source: "dns-sd")
 
                 // Set hostname if we got one
                 if let hostName = service.hostName, device.hostname == nil {
-                    logger.info("DNS-SD: Setting hostname to \(hostName)")
+                    Log.debug("DNS-SD: Setting hostname to \(hostName)", category: .discovery)
                     device.hostname = hostName
                 }
 
@@ -385,33 +374,31 @@ public actor DiscoveryManager {
                 // Recalculate smart score
                 device.smartScore = calculateSmartScore(for: device)
 
-                logger.info("DNS-SD: Final device - MAC=\(device.mac) hostname=\(device.hostname ?? "nil") type=\(device.deviceType.rawValue)")
+                Log.info("DNS-SD: Final device - MAC=\(device.mac) hostname=\(device.hostname ?? "nil") type=\(device.deviceType.rawValue)", category: .discovery)
 
                 devices[device.mac] = device
                 onDeviceUpdate?(device, .updated)
             } else {
-                logger.debug("DNS-SD: No ARP entry found for IP \(ip)")
+                Log.debug("DNS-SD: No ARP entry found for IP \(ip)", category: .discovery)
             }
         }
     }
 
     private func handleSSDPDevice(_ ssdpDevice: SSDPListener.SSDPDevice) async {
         guard let hostIP = ssdpDevice.hostIP else {
-            logger.warning("SSDP: No host IP in SSDP device, skipping")
-            debugLog("SSDP: No host IP, skipping")
+            Log.warning("SSDP: No host IP in SSDP device, skipping", category: .ssdp)
             return
         }
 
-        logger.info("SSDP: Processing device at \(hostIP)")
-        logger.info("SSDP: Server=\(ssdpDevice.server ?? "nil")")
-        debugLog("SSDP: Processing \(hostIP) - \(ssdpDevice.server ?? "no server")")
+        Log.info("SSDP: Processing device at \(hostIP)", category: .ssdp)
+        Log.debug("SSDP: Server=\(ssdpDevice.server ?? "nil")", category: .ssdp)
 
         // Find MAC for this IP
-        debugLog("SSDP: Looking up MAC for IP \(hostIP)...")
+        Log.debug("SSDP: Looking up MAC for IP \(hostIP)...", category: .ssdp)
         if let entries = try? await ARPScanner.shared.getARPTable() {
-            debugLog("SSDP: ARP table has \(entries.count) entries")
+            Log.debug("SSDP: ARP table has \(entries.count) entries", category: .ssdp)
             if let entry = entries.first(where: { $0.ip == hostIP }) {
-                debugLog("SSDP: Found MAC \(entry.mac) for IP \(hostIP)")
+                Log.debug("SSDP: Found MAC \(entry.mac) for IP \(hostIP)", category: .ssdp)
                 var device = await updateOrCreateDevice(mac: entry.mac, ip: hostIP, source: "SSDP")
 
                 // Add the service with a meaningful name
@@ -450,46 +437,46 @@ public actor DiscoveryManager {
                 // Extract hostname from SSDP server string if not set
                 if device.hostname == nil, let server = ssdpDevice.server {
                     let extractedName = extractDeviceName(from: server)
-                    debugLog("SSDP: Extracted hostname '\(extractedName ?? "nil")' from server '\(server)'")
+                    Log.debug("SSDP: Extracted hostname '\(extractedName ?? "nil")' from server '\(server)'", category: .ssdp)
                     device.hostname = extractedName
                 }
 
                 // Recalculate smart score
                 device.smartScore = calculateSmartScore(for: device)
 
-                debugLog("SSDP: Final device - MAC=\(device.mac) hostname=\(device.hostname ?? "nil") type=\(device.deviceType.rawValue) score=\(device.smartScore)")
+                Log.info("SSDP: Final device - MAC=\(device.mac) hostname=\(device.hostname ?? "nil") type=\(device.deviceType.rawValue) score=\(device.smartScore)", category: .ssdp)
 
                 devices[device.mac] = device
                 onDeviceUpdate?(device, .updated)
-                debugLog("SSDP: Called onDeviceUpdate for \(device.mac)")
+                Log.debug("SSDP: Called onDeviceUpdate for \(device.mac)", category: .ssdp)
 
                 // Trigger UPnP fingerprinting asynchronously
                 let macAddress = device.mac
                 let location = ssdpDevice.location
-                debugLog("SSDP: Starting fingerprint for \(macAddress)")
+                Log.debug("SSDP: Starting fingerprint for \(macAddress)", category: .fingerprinting)
                 Task { [weak self] in
                     await self?.fetchUPnPFingerprint(mac: macAddress, locationURL: location)
                 }
             } else {
-                debugLog("SSDP: NO MAC FOUND for IP \(hostIP) in ARP table!")
+                Log.warning("SSDP: NO MAC FOUND for IP \(hostIP) in ARP table!", category: .ssdp)
                 let firstTen = entries.prefix(10).map { $0.ip }.joined(separator: ", ")
-                debugLog("SSDP: Available IPs: \(firstTen)...")
+                Log.debug("SSDP: Available IPs: \(firstTen)...", category: .ssdp)
             }
         } else {
-            debugLog("SSDP: Failed to get ARP table!")
+            Log.error("SSDP: Failed to get ARP table!", category: .ssdp)
         }
     }
 
     /// Fetch fingerprint for a device (UPnP + Fingerbank if API key available)
     private func fetchUPnPFingerprint(mac: String, locationURL: String) async {
         guard var device = devices[mac] else {
-            logger.debug("Fingerprint: Device \(mac) not found in devices list")
+            Log.debug("Fingerprint: Device \(mac) not found in devices list", category: .fingerprinting)
             return
         }
 
         // Only fetch if we don't already have fingerprint data
         if device.fingerprint != nil {
-            logger.debug("Fingerprint: Device \(mac) already has fingerprint, skipping")
+            Log.debug("Fingerprint: Device \(mac) already has fingerprint, skipping", category: .fingerprinting)
             return
         }
 
@@ -497,8 +484,7 @@ public actor DiscoveryManager {
         let apiKey = self.fingerbankAPIKey
         let hasFingerbankKey = apiKey != nil
 
-        logger.info("Fingerprint: Starting fetch for \(mac) (Fingerbank: \(hasFingerbankKey ? "enabled" : "disabled"))")
-        debugLog("Fingerprint: Starting fetch for \(mac) with Fingerbank \(hasFingerbankKey ? "enabled" : "disabled")")
+        Log.info("Fingerprint: Starting fetch for \(mac) (Fingerbank: \(hasFingerbankKey ? "enabled" : "disabled"))", category: .fingerprinting)
 
         // Use full fingerprinting if Fingerbank API key is available
         let fingerprint = await DeviceFingerprintManager.shared.fingerprintDevice(
@@ -508,27 +494,27 @@ public actor DiscoveryManager {
         )
 
         if let fp = fingerprint {
-            logger.info("Fingerprint: SUCCESS for \(mac) - friendlyName=\(fp.friendlyName ?? "nil") manufacturer=\(fp.manufacturer ?? "nil") model=\(fp.modelName ?? "nil")")
+            Log.info("Fingerprint: SUCCESS for \(mac) - friendlyName=\(fp.friendlyName ?? "nil") manufacturer=\(fp.manufacturer ?? "nil") model=\(fp.modelName ?? "nil")", category: .fingerprinting)
 
             device.fingerprint = fp
 
             // Update device type from fingerprint if still unknown
             if device.deviceType == .unknown {
                 let inferredType = inferDeviceType(from: fp)
-                logger.info("Fingerprint: Inferred type \(inferredType.rawValue) for \(mac)")
+                Log.debug("Fingerprint: Inferred type \(inferredType.rawValue) for \(mac)", category: .fingerprinting)
                 device.deviceType = inferredType
             }
 
             // Update hostname from friendly name if not set
             if device.hostname == nil, let friendlyName = fp.friendlyName {
-                logger.info("Fingerprint: Setting hostname to '\(friendlyName)' for \(mac)")
+                Log.debug("Fingerprint: Setting hostname to '\(friendlyName)' for \(mac)", category: .fingerprinting)
                 device.hostname = friendlyName
             }
 
             devices[mac] = device
             onDeviceUpdate?(device, .updated)
         } else {
-            logger.warning("Fingerprint: FAILED for \(mac) - no data returned")
+            Log.warning("Fingerprint: FAILED for \(mac) - no data returned", category: .fingerprinting)
         }
     }
 

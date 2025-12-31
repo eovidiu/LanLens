@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 /// Uses dns-sd command-line tool for reliable mDNS/Bonjour discovery
 public actor DNSSDScanner {
@@ -123,18 +124,31 @@ public actor DNSSDScanner {
     }
 
     private func resolveService(name: String, type: String) async -> DNSSDService? {
-        // dns-sd -L to lookup service details
+        // Check if name contains problematic characters for dns-sd command
+        // Include both straight and curly/smart apostrophes and quotes
+        let hasProblematicChars = name.contains("'") ||  // straight apostrophe (U+0027)
+                                  name.contains("\u{2019}") ||  // right single quote - curly apostrophe
+                                  name.contains("\u{2018}") ||  // left single quote
+                                  name.contains("\"") || // straight double quote
+                                  name.contains("\u{201C}") ||  // left double quote
+                                  name.contains("\u{201D}") ||  // right double quote
+                                  name.contains("\\")
+
+        Log.info("DNSSDScanner.resolveService: name='\(name)' hasProblematicChars=\(hasProblematicChars)", category: .mdns)
+
+        if hasProblematicChars {
+            // Use NWConnection for names with special characters
+            Log.info("DNSSDScanner: Using NWConnection for '\(name)' (has special chars)", category: .mdns)
+            return await resolveServiceViaNWConnection(name: name, type: type)
+        }
+
+        // Try dns-sd -L first for lookup service details
         let lookupOutput = await runDNSSD(["-L", name, type, "local."], timeout: 2.0)
-        guard let (hostName, port, txtRecords) = parseLookupOutput(lookupOutput) else {
-            return DNSSDService(
-                name: name,
-                type: type,
-                domain: "local.",
-                hostName: nil,
-                ip: nil,
-                port: nil,
-                txtRecords: [:]
-            )
+
+        // If lookup failed or returned no results, fallback to NWConnection
+        guard let (hostName, port, txtRecords) = parseLookupOutput(lookupOutput), hostName != nil else {
+            Log.debug("dns-sd -L failed for '\(name)', trying NWConnection", category: .mdns)
+            return await resolveServiceViaNWConnection(name: name, type: type)
         }
 
         // dns-sd -G to get IP from hostname
@@ -152,6 +166,160 @@ public actor DNSSDScanner {
             ip: ip,
             port: port,
             txtRecords: txtRecords
+        )
+    }
+
+    /// Resolve service using NWConnection (handles special characters in names)
+    private func resolveServiceViaNWConnection(name: String, type: String) async -> DNSSDService? {
+        Log.debug("NWConnection: Resolving '\(name)' type '\(type)'", category: .mdns)
+
+        let endpoint = NWEndpoint.service(name: name, type: type, domain: "local.", interface: nil)
+        let connection = NWConnection(to: endpoint, using: .tcp)
+
+        let result = await withCheckedContinuation { (continuation: CheckedContinuation<(ip: String?, port: Int?, hostname: String?), Never>) in
+            // Use nonisolated(unsafe) for the mutable flag variable
+            // This is safe because we synchronize access via NSLock
+            nonisolated(unsafe) var resumed = false
+            let lock = NSLock()
+
+            connection.stateUpdateHandler = { state in
+                lock.lock()
+                guard !resumed else {
+                    lock.unlock()
+                    return
+                }
+
+                switch state {
+                case .ready:
+                    // Try to get the resolved IP from the path's gateways or local/remote endpoints
+                    if let path = connection.currentPath {
+                        // Check remoteEndpoint
+                        if let remoteEndpoint = path.remoteEndpoint {
+                            switch remoteEndpoint {
+                            case .hostPort(let host, let port):
+                                var ip: String? = nil
+                                var hostname: String? = nil
+
+                                switch host {
+                                case .ipv4(let addr):
+                                    // Strip interface suffix (e.g., "192.168.0.31%en0" -> "192.168.0.31")
+                                    let addrStr = "\(addr)"
+                                    if let percentIndex = addrStr.firstIndex(of: "%") {
+                                        ip = String(addrStr[..<percentIndex])
+                                    } else {
+                                        ip = addrStr
+                                    }
+                                case .ipv6(let addr):
+                                    var addrStr = "\(addr)"
+                                    // Strip interface suffix
+                                    if let percentIndex = addrStr.firstIndex(of: "%") {
+                                        addrStr = String(addrStr[..<percentIndex])
+                                    }
+                                    // Skip loopback, but keep link-local IPv6 addresses as fallback
+                                    // We'll try to get IPv4 later via hostname lookup
+                                    if addrStr != "::1" {
+                                        // Mark as link-local for later IPv4 lookup attempt
+                                        if addrStr.hasPrefix("fe80:") {
+                                            // Store the link-local as a fallback, we'll try to get IPv4 via hostname
+                                            Log.debug("NWConnection: Got link-local IPv6, will try hostname lookup", category: .mdns)
+                                        } else {
+                                            ip = addrStr
+                                        }
+                                    }
+                                case .name(let name, _):
+                                    hostname = name
+                                @unknown default:
+                                    break
+                                }
+
+                                Log.debug("NWConnection: Got host=\(host) ip=\(ip ?? "nil") hostname=\(hostname ?? "nil") port=\(port.rawValue)", category: .mdns)
+
+                                resumed = true
+                                lock.unlock()
+                                connection.cancel()
+                                continuation.resume(returning: (ip, Int(port.rawValue), hostname))
+                                return
+
+                            default:
+                                Log.debug("NWConnection: remoteEndpoint is not hostPort: \(remoteEndpoint)", category: .mdns)
+                            }
+                        }
+                    }
+
+                    Log.debug("NWConnection: Ready but no usable endpoint for '\(name)'", category: .mdns)
+                    resumed = true
+                    lock.unlock()
+                    connection.cancel()
+                    continuation.resume(returning: (nil, nil, nil))
+
+                case .failed(let error):
+                    Log.debug("NWConnection: Failed for '\(name)': \(error)", category: .mdns)
+                    resumed = true
+                    lock.unlock()
+                    continuation.resume(returning: (nil, nil, nil))
+
+                case .cancelled:
+                    resumed = true
+                    lock.unlock()
+                    continuation.resume(returning: (nil, nil, nil))
+
+                case .waiting(let error):
+                    Log.debug("NWConnection: Waiting for '\(name)': \(error)", category: .mdns)
+                    lock.unlock()
+
+                default:
+                    lock.unlock()
+                }
+            }
+
+            connection.start(queue: .global(qos: .utility))
+
+            // Timeout after 3 seconds
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3.0) {
+                lock.lock()
+                if !resumed {
+                    Log.debug("NWConnection: Timeout for '\(name)'", category: .mdns)
+                    resumed = true
+                    lock.unlock()
+                    connection.cancel()
+                    continuation.resume(returning: (nil, nil, nil))
+                } else {
+                    lock.unlock()
+                }
+            }
+        }
+
+        // If we got a hostname but no IP, try to resolve it via dns-sd -G
+        var finalIP = result.ip
+        if finalIP == nil, let hostname = result.hostname {
+            Log.debug("NWConnection: Resolving hostname '\(hostname)' to IP", category: .mdns)
+            let queryOutput = await runDNSSD(["-G", "v4", hostname], timeout: 2.0)
+            finalIP = parseQueryOutput(queryOutput)
+            Log.debug("NWConnection: Resolved '\(hostname)' to IP: \(finalIP ?? "nil")", category: .mdns)
+        }
+
+        // If still no IP, try to derive hostname from service name and resolve
+        // e.g., "Mara's MacBook Air" -> "Maras-MacBook-Air.local"
+        if finalIP == nil {
+            let derivedHostname = deriveHostnameFromServiceName(name)
+            Log.debug("NWConnection: Trying derived hostname '\(derivedHostname)' for '\(name)'", category: .mdns)
+            let queryOutput = await runDNSSD(["-G", "v4", derivedHostname], timeout: 2.0)
+            finalIP = parseQueryOutput(queryOutput)
+            if finalIP != nil {
+                Log.info("NWConnection: Resolved derived hostname '\(derivedHostname)' to IP: \(finalIP!)", category: .mdns)
+            }
+        }
+
+        Log.info("NWConnection: Final result for '\(name)': ip=\(finalIP ?? "nil") port=\(result.port.map { String($0) } ?? "nil")", category: .mdns)
+
+        return DNSSDService(
+            name: name,
+            type: type,
+            domain: "local.",
+            hostName: result.hostname,
+            ip: finalIP,
+            port: result.port,
+            txtRecords: [:]
         )
     }
 
@@ -275,6 +443,36 @@ public actor DNSSDScanner {
         }
 
         return nil
+    }
+
+    /// Derive a hostname from a service name
+    /// e.g., "Mara's MacBook Air" -> "Maras-MacBook-Air.local"
+    /// This is how macOS typically converts display names to hostnames
+    private func deriveHostnameFromServiceName(_ name: String) -> String {
+        var hostname = name
+
+        // Handle prefixed names like "0E5F46A40FBE@Ovidiu's MacBook Pro"
+        if let atIndex = hostname.firstIndex(of: "@") {
+            hostname = String(hostname[hostname.index(after: atIndex)...])
+        }
+
+        // Remove apostrophes (both straight and curly)
+        hostname = hostname.replacingOccurrences(of: "'", with: "")
+        hostname = hostname.replacingOccurrences(of: "\u{2019}", with: "")
+        hostname = hostname.replacingOccurrences(of: "\u{2018}", with: "")
+
+        // Replace spaces with hyphens
+        hostname = hostname.replacingOccurrences(of: " ", with: "-")
+
+        // Remove any other special characters that aren't alphanumeric or hyphen
+        hostname = hostname.filter { $0.isLetter || $0.isNumber || $0 == "-" }
+
+        // Add .local suffix
+        if !hostname.hasSuffix(".local") {
+            hostname += ".local"
+        }
+
+        return hostname
     }
 
     /// Parse dns-sd -G output to get IP address
