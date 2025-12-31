@@ -5,7 +5,7 @@
     <key>CFBundleName</key>
     <string>LanLens</string>
     <key>CFBundleDisplayName</key>
-    <string>LanLens</string>
+    <string>Lan Lens</string>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleVersion</key>

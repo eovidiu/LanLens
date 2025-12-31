@@ -24,6 +24,23 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
     /// Device fingerprint data from UPnP and/or Fingerbank
     public var fingerprint: DeviceFingerprint?
 
+    // MARK: - Enhanced Inference Data
+
+    /// Parsed mDNS TXT record data
+    public var mdnsTXTRecords: MDNSTXTData?
+
+    /// Parsed port banner data from probing
+    public var portBanners: PortBannerData?
+
+    /// MAC address analysis data
+    public var macAnalysis: MACAnalysisData?
+
+    /// Security posture assessment
+    public var securityPosture: SecurityPostureData?
+
+    /// Device behavior profile over time
+    public var behaviorProfile: DeviceBehaviorProfile?
+
     public init(
         id: UUID = UUID(),
         mac: String,
@@ -40,7 +57,12 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         smartSignals: [SmartSignal] = [],
         deviceType: DeviceType = .unknown,
         userLabel: String? = nil,
-        fingerprint: DeviceFingerprint? = nil
+        fingerprint: DeviceFingerprint? = nil,
+        mdnsTXTRecords: MDNSTXTData? = nil,
+        portBanners: PortBannerData? = nil,
+        macAnalysis: MACAnalysisData? = nil,
+        securityPosture: SecurityPostureData? = nil,
+        behaviorProfile: DeviceBehaviorProfile? = nil
     ) {
         self.id = id
         self.mac = mac.uppercased()
@@ -58,6 +80,11 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         self.deviceType = deviceType
         self.userLabel = userLabel
         self.fingerprint = fingerprint
+        self.mdnsTXTRecords = mdnsTXTRecords
+        self.portBanners = portBanners
+        self.macAnalysis = macAnalysis
+        self.securityPosture = securityPosture
+        self.behaviorProfile = behaviorProfile
     }
 
     /// Display name: user label > hostname > fingerprint name > vendor + MAC suffix

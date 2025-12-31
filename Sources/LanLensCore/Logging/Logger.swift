@@ -17,6 +17,11 @@ public enum LogCategory: String, CaseIterable, Sendable {
     case api = "API"
     case cache = "Cache"
     case general = "General"
+    case mdnsTXT = "mDNS-TXT"
+    case portBanner = "PortBanner"
+    case macAnalysis = "MACAnalysis"
+    case security = "Security"
+    case behavior = "Behavior"
 }
 
 // MARK: - File Log Configuration

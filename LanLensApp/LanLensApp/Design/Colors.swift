@@ -27,6 +27,14 @@ extension Color {
     /// Danger/error indicator - Red (#FF453A)
     static let lanLensDanger = Color(red: 0xFF/255, green: 0x45/255, blue: 0x3A/255)
 
+    /// Randomized MAC address indicator - Purple (#9B59B6)
+    static let lanLensRandomized = Color(red: 0x9B/255, green: 0x59/255, blue: 0xB6/255)
+
+    // MARK: - Brand Colors
+
+    /// Google brand blue for GoogleCast devices (#4285F4)
+    static let lanLensGoogleBlue = Color(red: 0x42/255, green: 0x85/255, blue: 0xF4/255)
+
     // MARK: - Text Colors
 
     /// Secondary text color - Gray (#8E8E93)

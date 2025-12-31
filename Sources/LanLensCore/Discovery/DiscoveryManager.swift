@@ -238,6 +238,43 @@ public actor DiscoveryManager {
             }
         }
 
+        // Grab port banners for enhanced inference
+        if !result.openPorts.isEmpty {
+            let openPortNumbers = result.openPorts.map { Int($0.port) }
+            let bannerData = await PortBannerGrabber.shared.grabBanners(ip: device.ip, openPorts: openPortNumbers)
+
+            // Store banner data if we got any useful information
+            if bannerData.ssh != nil || bannerData.http != nil || bannerData.rtsp != nil {
+                device.portBanners = bannerData
+                Log.info("Grabbed port banners for \(device.mac): SSH=\(bannerData.ssh != nil), HTTP=\(bannerData.http != nil), RTSP=\(bannerData.rtsp != nil)", category: .portBanner)
+
+                // Re-evaluate device type with enhanced data if still unknown
+                if device.deviceType == .unknown {
+                    let (inferredType, _) = await DeviceTypeInferenceEngine.shared.inferTypeWithEnhancedData(
+                        signals: [],
+                        mdnsTXTData: device.mdnsTXTRecords,
+                        portBannerData: device.portBanners,
+                        macAnalysisData: device.macAnalysis
+                    )
+                    if inferredType != .unknown {
+                        device.deviceType = inferredType
+                        Log.debug("Updated device type to \(inferredType.rawValue) from port banner analysis", category: .portBanner)
+                    }
+                }
+            }
+        }
+
+        // Assess security posture now that we have port and banner data
+        let openPortNumbers = device.openPorts.map { $0.number }
+        let securityPosture = SecurityPostureAssessor.shared.assess(
+            hostname: device.hostname,
+            openPorts: openPortNumbers,
+            portBanners: device.portBanners,
+            httpHeaders: device.portBanners?.http
+        )
+        device.securityPosture = securityPosture
+        Log.info("Security posture assessed for \(device.mac): risk=\(securityPosture.riskLevel.rawValue) score=\(securityPosture.riskScore)", category: .security)
+
         // Recalculate smart score
         device.smartScore = calculateSmartScore(for: device)
 
@@ -285,7 +322,7 @@ public actor DiscoveryManager {
             let cleanIP = hostIP.replacingOccurrences(of: "[", with: "").replacingOccurrences(of: "]", with: "")
 
             if let entry = entries.first(where: { $0.ip == cleanIP }) {
-                var device = await updateOrCreateDevice(mac: entry.mac, ip: cleanIP, source: "mDNS")
+                var device = await updateOrCreateDevice(mac: entry.mac, ip: cleanIP, source: "mDNS", services: [service.type])
 
                 // Add the service
                 let discoveredService = DiscoveredService(
@@ -309,9 +346,34 @@ public actor DiscoveryManager {
                     device.smartSignals.append(signal)
                 }
 
-                // Update device type if we can infer it
+                // Analyze mDNS TXT records for enhanced inference
+                if !service.txtRecords.isEmpty {
+                    let txtAnalysis = await MDNSTXTRecordAnalyzer.shared.analyze(
+                        serviceType: service.type,
+                        txtRecords: service.txtRecords
+                    )
+                    // Merge with existing mDNS TXT data
+                    device.mdnsTXTRecords = mergeMDNSTXTData(existing: device.mdnsTXTRecords, new: txtAnalysis)
+                    Log.debug("Analyzed mDNS TXT for \(device.mac): service=\(service.type)", category: .mdnsTXT)
+                }
+
+                // Update device type using enhanced inference if we have analyzer data
                 if device.deviceType == .unknown {
-                    device.deviceType = service.inferredDeviceType
+                    if device.mdnsTXTRecords != nil || device.portBanners != nil || device.macAnalysis != nil {
+                        let (inferredType, _) = await DeviceTypeInferenceEngine.shared.inferTypeWithEnhancedData(
+                            signals: [],
+                            mdnsTXTData: device.mdnsTXTRecords,
+                            portBannerData: device.portBanners,
+                            macAnalysisData: device.macAnalysis
+                        )
+                        if inferredType != .unknown {
+                            device.deviceType = inferredType
+                        } else {
+                            device.deviceType = service.inferredDeviceType
+                        }
+                    } else {
+                        device.deviceType = service.inferredDeviceType
+                    }
                 }
 
                 // Recalculate smart score
@@ -336,7 +398,7 @@ public actor DiscoveryManager {
         if let entries = try? await ARPScanner.shared.getARPTable() {
             if let entry = entries.first(where: { $0.ip == ip }) {
                 Log.info("DNS-SD: Found MAC \(entry.mac) for IP \(ip)", category: .discovery)
-                var device = await updateOrCreateDevice(mac: entry.mac, ip: ip, source: "dns-sd")
+                var device = await updateOrCreateDevice(mac: entry.mac, ip: ip, source: "dns-sd", services: [service.type])
 
                 // Set hostname if we got one
                 if let hostName = service.hostName, device.hostname == nil {
@@ -366,9 +428,33 @@ public actor DiscoveryManager {
                     device.smartSignals.append(signal)
                 }
 
-                // Update device type if we can infer it
+                // Analyze mDNS TXT records for enhanced inference
+                if !service.txtRecords.isEmpty {
+                    let txtAnalysis = await MDNSTXTRecordAnalyzer.shared.analyze(
+                        serviceType: service.type,
+                        txtRecords: service.txtRecords
+                    )
+                    device.mdnsTXTRecords = mergeMDNSTXTData(existing: device.mdnsTXTRecords, new: txtAnalysis)
+                    Log.debug("Analyzed DNS-SD TXT for \(device.mac): service=\(service.type)", category: .mdnsTXT)
+                }
+
+                // Update device type using enhanced inference if we have analyzer data
                 if device.deviceType == .unknown {
-                    device.deviceType = service.inferredDeviceType
+                    if device.mdnsTXTRecords != nil || device.portBanners != nil || device.macAnalysis != nil {
+                        let (inferredType, _) = await DeviceTypeInferenceEngine.shared.inferTypeWithEnhancedData(
+                            signals: [],
+                            mdnsTXTData: device.mdnsTXTRecords,
+                            portBannerData: device.portBanners,
+                            macAnalysisData: device.macAnalysis
+                        )
+                        if inferredType != .unknown {
+                            device.deviceType = inferredType
+                        } else {
+                            device.deviceType = service.inferredDeviceType
+                        }
+                    } else {
+                        device.deviceType = service.inferredDeviceType
+                    }
                 }
 
                 // Recalculate smart score
@@ -399,11 +485,12 @@ public actor DiscoveryManager {
             Log.debug("SSDP: ARP table has \(entries.count) entries", category: .ssdp)
             if let entry = entries.first(where: { $0.ip == hostIP }) {
                 Log.debug("SSDP: Found MAC \(entry.mac) for IP \(hostIP)", category: .ssdp)
-                var device = await updateOrCreateDevice(mac: entry.mac, ip: hostIP, source: "SSDP")
+                // Extract service name for behavior tracking
+                let serviceName = ssdpDevice.st ?? extractServiceName(from: ssdpDevice.server) ?? "UPnP Service"
+                var device = await updateOrCreateDevice(mac: entry.mac, ip: hostIP, source: "SSDP", services: [serviceName])
 
                 // Add the service with a meaningful name
                 // Use ST (search target) or extract from server header, not the raw USN
-                let serviceName = ssdpDevice.st ?? extractServiceName(from: ssdpDevice.server) ?? "UPnP Service"
                 let discoveredService = DiscoveredService(
                     name: serviceName,
                     type: .ssdp,
@@ -603,27 +690,76 @@ public actor DiscoveryManager {
         return .unknown
     }
 
-    private func updateOrCreateDevice(mac: String, ip: String, source: String) async -> Device {
+    private func updateOrCreateDevice(mac: String, ip: String, source: String, services: [String] = []) async -> Device {
         let normalizedMAC = mac.uppercased()
 
         if var existing = devices[normalizedMAC] {
             existing.ip = ip
             existing.lastSeen = Date()
             existing.isOnline = true
+
+            // Backfill MAC analysis if missing (for devices discovered before this feature)
+            if existing.macAnalysis == nil {
+                let macAnalysis = MACAddressAnalyzer.shared.analyze(mac: normalizedMAC, vendor: existing.vendor)
+                existing.macAnalysis = macAnalysis
+                Log.debug("Backfilled MAC analysis for \(normalizedMAC)", category: .macAnalysis)
+            }
+
+            // Record presence for behavior tracking
+            await DeviceBehaviorTracker.shared.recordPresence(
+                for: normalizedMAC,
+                isPresent: true,
+                services: services,
+                ipAddress: ip
+            )
+
+            // Retrieve and store updated behavior profile
+            if let profile = await DeviceBehaviorTracker.shared.getProfile(for: normalizedMAC) {
+                existing.behaviorProfile = profile
+                Log.debug("Updated behavior profile for \(normalizedMAC): classification=\(profile.classification.rawValue)", category: .behavior)
+            }
+
             devices[normalizedMAC] = existing
             return existing
         } else {
             // Look up vendor from MAC
             let vendor = MACVendorLookup.shared.lookup(mac: normalizedMAC)
 
-            let device = Device(
+            // Analyze MAC address for enhanced inference
+            let macAnalysis = MACAddressAnalyzer.shared.analyze(mac: normalizedMAC, vendor: vendor)
+            Log.debug("MAC analysis for \(normalizedMAC): randomized=\(macAnalysis.isRandomized), vendor=\(vendor ?? "nil")", category: .macAnalysis)
+
+            var device = Device(
                 mac: normalizedMAC,
                 ip: ip,
                 vendor: vendor,
                 firstSeen: Date(),
                 lastSeen: Date(),
-                isOnline: true
+                isOnline: true,
+                macAnalysis: macAnalysis
             )
+
+            // If MAC analysis gives us a strong device type hint, use it
+            if device.deviceType == .unknown, let specialization = macAnalysis.vendorSpecialization {
+                if macAnalysis.vendorConfidence == .high {
+                    device.deviceType = specialization
+                    Log.debug("Set device type to \(specialization.rawValue) from MAC vendor specialization", category: .macAnalysis)
+                }
+            }
+
+            // Record initial presence for behavior tracking
+            await DeviceBehaviorTracker.shared.recordPresence(
+                for: normalizedMAC,
+                isPresent: true,
+                services: services,
+                ipAddress: ip
+            )
+
+            // Initialize behavior profile
+            if let profile = await DeviceBehaviorTracker.shared.getProfile(for: normalizedMAC) {
+                device.behaviorProfile = profile
+                Log.debug("Initialized behavior profile for \(normalizedMAC)", category: .behavior)
+            }
 
             devices[normalizedMAC] = device
             onDeviceUpdate?(device, .discovered)
@@ -735,5 +871,42 @@ public actor DiscoveryManager {
         }
 
         return nil
+    }
+
+    // MARK: - Enhanced Analyzer Helpers
+
+    /// Merge new mDNS TXT data with existing data, preserving both.
+    /// Each service type's data is merged individually.
+    private func mergeMDNSTXTData(existing: MDNSTXTData?, new: MDNSTXTData) -> MDNSTXTData {
+        guard var merged = existing else {
+            return new
+        }
+
+        // Merge AirPlay data (prefer new if both exist)
+        if let newAirplay = new.airplay {
+            merged.airplay = newAirplay
+        }
+
+        // Merge Google Cast data (prefer new if both exist)
+        if let newGoogleCast = new.googleCast {
+            merged.googleCast = newGoogleCast
+        }
+
+        // Merge HomeKit data (prefer new if both exist)
+        if let newHomeKit = new.homeKit {
+            merged.homeKit = newHomeKit
+        }
+
+        // Merge RAOP data (prefer new if both exist)
+        if let newRaop = new.raop {
+            merged.raop = newRaop
+        }
+
+        // Merge raw records (combine all service types)
+        for (serviceType, records) in new.rawRecords {
+            merged.rawRecords[serviceType] = records
+        }
+
+        return merged
     }
 }

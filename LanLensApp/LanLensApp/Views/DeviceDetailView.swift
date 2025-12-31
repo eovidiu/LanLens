@@ -34,6 +34,21 @@ struct DeviceDetailView: View {
                         FingerprintCard(fingerprint: fingerprint)
                     }
 
+                    // MAC Analysis (if available)
+                    if let macAnalysis = currentDevice.macAnalysis {
+                        MACAnalysisCard(macAddress: currentDevice.mac, macAnalysis: macAnalysis)
+                    }
+
+                    // Security posture (if available)
+                    if let securityPosture = currentDevice.securityPosture {
+                        SecurityPostureCard(securityPosture: securityPosture)
+                    }
+
+                    // Behavior profile (if available)
+                    if let behaviorProfile = currentDevice.behaviorProfile {
+                        BehaviorProfileCard(behaviorProfile: behaviorProfile)
+                    }
+
                     // Smart signals (only if present)
                     if !currentDevice.smartSignals.isEmpty {
                         SmartSignalsCard(signals: currentDevice.smartSignals)
@@ -42,6 +57,16 @@ struct DeviceDetailView: View {
                     // Open ports (only if present)
                     if !currentDevice.openPorts.isEmpty {
                         OpenPortsCard(ports: currentDevice.openPorts)
+                    }
+
+                    // Port banners (if available)
+                    if let portBanners = currentDevice.portBanners {
+                        PortBannerCard(portBanners: portBanners)
+                    }
+
+                    // mDNS TXT records (if available)
+                    if let mdnsTXT = currentDevice.mdnsTXTRecords {
+                        MDNSTXTCard(mdnsTXT: mdnsTXT)
                     }
 
                     // Services (only if present)

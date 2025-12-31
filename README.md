@@ -70,6 +70,37 @@ To enable Level 2 fingerprinting:
 2. Open Settings in LanLens
 3. Enable Fingerbank and enter your API key
 
+### Smart Device Detection
+
+LanLens uses a **weighted confidence scoring system** to classify devices by aggregating signals from multiple discovery sources:
+
+| Source | Weight | Description |
+|--------|--------|-------------|
+| **Fingerbank** | 0.9 | MAC address lookup database - most reliable |
+| **UPnP** | 0.8 | Device description XML from UPnP responses |
+| **mDNS** | 0.7 | Bonjour service types (e.g., `_airplay._tcp`) |
+| **SSDP** | 0.7 | SSDP headers (SERVER, USN, ST) |
+| **Hostname** | 0.6 | Device hostname patterns |
+| **Port** | 0.5 | Open port numbers - least reliable |
+
+**Detection Examples:**
+
+| Signal | Detected Type | Confidence |
+|--------|---------------|------------|
+| mDNS `_sonos._tcp` | Speaker | 90% |
+| mDNS `_airplay._tcp` | Smart TV | 80% |
+| mDNS `_hue._tcp` | Light | 95% |
+| SSDP Server "Roku" | Smart TV | 95% |
+| Port 1400 open | Speaker (Sonos) | 85% |
+| Port 8008/8009 open | Smart TV (Cast) | 80% |
+| Hostname contains "iphone" | Phone | 85% |
+
+The scoring algorithm:
+1. Each signal suggests a device type with a confidence score (0.0-1.0)
+2. Confidence is multiplied by the source weight
+3. Scores are summed per device type
+4. The type with the highest total score wins
+
 ### REST API
 
 LanLens includes an optional REST API server for integration:

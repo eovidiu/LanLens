@@ -37,7 +37,7 @@ struct MenuBarView: View {
         .frame(minHeight: 400, maxHeight: 700)
         .background(Color.lanLensBackground)
         .contextMenu {
-            Button("Quit LanLens") {
+            Button("Quit Lan Lens") {
                 NSApplication.shared.terminate(nil)
             }
         }
@@ -52,6 +52,14 @@ private struct MainContentView: View {
     @Binding var navigationPath: NavigationPath
     @Binding var isOtherDevicesExpanded: Bool
 
+    /// Count of devices with medium or higher security risk
+    private var issueCount: Int {
+        appState.devices.filter { device in
+            guard let posture = device.securityPosture else { return false }
+            return posture.riskLevel.numericValue >= 2 // medium or higher
+        }.count
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HeaderView(onSettingsTap: {
@@ -60,6 +68,15 @@ private struct MainContentView: View {
 
             Divider()
                 .background(Color.white.opacity(0.1))
+
+            NetworkSummaryHeader(
+                totalDevices: appState.devices.count,
+                smartDevices: appState.smartDevices.count,
+                issueCount: issueCount,
+                onIssueTap: {
+                    // TODO: Implement issue filtering/navigation
+                }
+            )
 
             ScrollView {
                 VStack(spacing: 16) {
@@ -106,7 +123,7 @@ private struct HeaderView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Color.lanLensAccent)
 
-            Text("LanLens")
+            Text("Lan Lens")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.white)
 
@@ -123,6 +140,136 @@ private struct HeaderView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+}
+
+// MARK: - Network Summary Header
+
+private struct NetworkSummaryHeader: View {
+    let totalDevices: Int
+    let smartDevices: Int
+    let issueCount: Int
+    let onIssueTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Devices section
+            SummaryItem(
+                value: totalDevices,
+                label: "Devices",
+                valueColor: .white
+            )
+
+            SummaryDivider()
+
+            // Smart section
+            SummaryItem(
+                value: smartDevices,
+                label: "Smart",
+                valueColor: .lanLensAccent
+            )
+
+            SummaryDivider()
+
+            // Issues section (tappable)
+            Button(action: onIssueTap) {
+                IssuesSummaryItem(
+                    issueCount: issueCount
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.lanLensCard.opacity(0.5))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(summaryAccessibilityLabel)
+    }
+
+    private var summaryAccessibilityLabel: String {
+        let issueText = issueCount == 1 ? "issue" : "issues"
+        return "\(totalDevices) devices, \(smartDevices) smart, \(issueCount) \(issueText)"
+    }
+}
+
+// MARK: - Summary Item
+
+private struct SummaryItem: View {
+    let value: Int
+    let label: String
+    let valueColor: Color
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text("\(value)")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(valueColor)
+
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.lanLensSecondaryText)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Issues Summary Item
+
+private struct IssuesSummaryItem: View {
+    let issueCount: Int
+
+    @State private var isHovered = false
+
+    private var issueColor: Color {
+        issueCount > 0 ? .lanLensWarning : .lanLensSuccess
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            VStack(spacing: 2) {
+                HStack(spacing: 4) {
+                    Text("\(issueCount)")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(issueColor)
+
+                    if issueCount > 0 {
+                        Circle()
+                            .fill(issueColor)
+                            .frame(width: 6, height: 6)
+                    }
+                }
+
+                Text("Issues")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.lanLensSecondaryText)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovered ? Color.white.opacity(0.08) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .accessibilityLabel(issueCount == 0 ? "No security issues" : "\(issueCount) security issues detected")
+        .accessibilityHint("Tap to view devices with security issues")
+    }
+}
+
+// MARK: - Summary Divider
+
+private struct SummaryDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.15))
+            .frame(width: 1, height: 28)
+            .padding(.horizontal, 8)
     }
 }
 
@@ -350,7 +497,7 @@ private struct MoreMenu: View {
                 Divider()
                     .padding(.vertical, 4)
 
-                MenuButton(title: "Quit LanLens", icon: "xmark.circle", shortcut: "⌘Q") {
+                MenuButton(title: "Quit Lan Lens", icon: "xmark.circle", shortcut: "⌘Q") {
                     NSApplication.shared.terminate(nil)
                 }
             }

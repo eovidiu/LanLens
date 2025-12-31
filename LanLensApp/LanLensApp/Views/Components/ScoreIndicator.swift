@@ -22,9 +22,15 @@ struct ScoreIndicator: View {
                     .frame(width: 6, height: 6)
             }
         }
+        .tooltip(tooltipText)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Smart score \(score) out of 100")
         .accessibilityValue("\(filledDots) out of 5 dots")
+    }
+
+    /// Generates tooltip text showing the score and capability level.
+    private var tooltipText: String {
+        "Smart Score: \(score)/100\n\(filledDots)/5 capability level"
     }
 }
 

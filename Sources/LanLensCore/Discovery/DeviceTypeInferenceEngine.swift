@@ -20,6 +20,10 @@ public actor DeviceTypeInferenceEngine {
         case fingerprint
         case upnp
         case hostname
+        case mdnsTXT      // Parsed mDNS TXT records (high confidence)
+        case portBanner   // Parsed port banners (medium-high confidence)
+        case macAnalysis  // MAC address analysis (medium confidence)
+        case behavior     // Device presence/usage patterns
     }
     
     /// A signal suggesting a device type with associated confidence
@@ -41,10 +45,14 @@ public actor DeviceTypeInferenceEngine {
     /// Higher values indicate more reliable sources
     private static let sourceWeights: [SignalSource: Double] = [
         .fingerprint: 0.9,   // Fingerbank data is most reliable
+        .mdnsTXT: 0.85,      // Parsed mDNS TXT records are very informative
         .upnp: 0.8,          // UPnP device descriptions are quite accurate
+        .portBanner: 0.75,   // Parsed port banners provide good device info
         .mdns: 0.7,          // mDNS service types are good indicators
         .ssdp: 0.7,          // SSDP headers are good indicators
         .hostname: 0.6,      // Hostnames can be informative but less reliable
+        .macAnalysis: 0.60,  // MAC analysis is useful but less specific
+        .behavior: 0.6,      // Behavior patterns are informative but not definitive
         .port: 0.5           // Port-based inference is least reliable
     ]
     
@@ -579,7 +587,7 @@ public actor DeviceTypeInferenceEngine {
     }
     
     // MARK: - Convenience Methods
-    
+
     /// Infer device type from all available data sources
     /// - Parameters:
     ///   - ssdpServer: SSDP server header
@@ -600,34 +608,130 @@ public actor DeviceTypeInferenceEngine {
         hostname: String? = nil
     ) -> DeviceType {
         var allSignals: [Signal] = []
-        
+
         // SSDP signals
         allSignals.append(contentsOf: signalsFromSSDPHeaders(server: ssdpServer, usn: ssdpUSN, st: ssdpST))
-        
+
         // mDNS signals
         if let serviceTypes = mdnsServiceTypes {
             for serviceType in serviceTypes {
                 allSignals.append(contentsOf: signalsFromMDNSServiceType(serviceType))
             }
         }
-        
+
         // Port signals
         if let ports = openPorts {
             for port in ports {
                 allSignals.append(contentsOf: signalsFromPort(port))
             }
         }
-        
+
         // Fingerprint signals
         if let fp = fingerprint {
             allSignals.append(contentsOf: signalsFromFingerprint(fp))
         }
-        
+
         // Hostname signals
         if let name = hostname {
             allSignals.append(contentsOf: signalsFromHostname(name))
         }
-        
+
         return infer(signals: allSignals)
+    }
+
+    // MARK: - Enhanced Inference with Analyzer Data
+
+    /// Infer device type using enhanced data from analyzers.
+    /// Combines traditional signals with parsed mDNS TXT records, port banners, and MAC analysis.
+    /// - Parameters:
+    ///   - signals: Array of existing signals from discovery
+    ///   - mdnsTXTData: Parsed mDNS TXT record data (optional)
+    ///   - portBannerData: Parsed port banner data (optional)
+    ///   - macAnalysisData: MAC address analysis data (optional)
+    /// - Returns: Tuple of (DeviceType, confidence score 0.0-1.0)
+    public func inferTypeWithEnhancedData(
+        signals: [Signal],
+        mdnsTXTData: MDNSTXTData?,
+        portBannerData: PortBannerData?,
+        macAnalysisData: MACAnalysisData?
+    ) async -> (DeviceType, Double) {
+        var allSignals = signals
+
+        // Add signals from mDNS TXT data
+        if let mdnsData = mdnsTXTData {
+            let mdnsSignals = await MDNSTXTRecordAnalyzer.shared.generateSignals(from: mdnsData)
+            allSignals.append(contentsOf: mdnsSignals)
+            Log.debug("Added \(mdnsSignals.count) signals from mDNS TXT analyzer", category: .mdnsTXT)
+        }
+
+        // Add signals from port banner data
+        if let bannerData = portBannerData {
+            let bannerSignals = await PortBannerGrabber.shared.generateSignals(from: bannerData)
+            allSignals.append(contentsOf: bannerSignals)
+            Log.debug("Added \(bannerSignals.count) signals from port banner analyzer", category: .portBanner)
+        }
+
+        // Add signals from MAC analysis data
+        if let macData = macAnalysisData {
+            let macSignals = MACAddressAnalyzer.shared.generateSignals(from: macData)
+            allSignals.append(contentsOf: macSignals)
+            Log.debug("Added \(macSignals.count) signals from MAC address analyzer", category: .macAnalysis)
+        }
+
+        // If no signals, return unknown with zero confidence
+        guard !allSignals.isEmpty else {
+            return (.unknown, 0.0)
+        }
+
+        // Aggregate confidence scores per device type
+        var typeScores: [DeviceType: Double] = [:]
+        var typeCounts: [DeviceType: Int] = [:]
+
+        for signal in allSignals {
+            guard signal.suggestedType != .unknown else { continue }
+
+            let baseWeight = Self.sourceWeights[signal.source] ?? 0.5
+            let weightedConfidence = signal.confidence * baseWeight
+
+            typeScores[signal.suggestedType, default: 0.0] += weightedConfidence
+            typeCounts[signal.suggestedType, default: 0] += 1
+        }
+
+        // Find the type with highest score
+        guard let bestMatch = typeScores.max(by: { $0.value < $1.value }) else {
+            return (.unknown, 0.0)
+        }
+
+        // Calculate a normalized confidence score (0.0-1.0)
+        // Based on the aggregated score relative to theoretical maximum
+        let totalSignals = allSignals.count
+        let maxPossibleScore = Double(totalSignals) * 0.9 // Assume max weight is ~0.9
+        let normalizedConfidence = min(1.0, bestMatch.value / max(1.0, maxPossibleScore))
+
+        Log.info("Enhanced inference result: \(bestMatch.key.rawValue) with confidence \(String(format: "%.2f", normalizedConfidence)) from \(allSignals.count) signals", category: .discovery)
+
+        return (bestMatch.key, normalizedConfidence)
+    }
+
+    /// Infer device type with enhanced data and return just the type (convenience wrapper)
+    /// - Parameters:
+    ///   - signals: Array of existing signals from discovery
+    ///   - mdnsTXTData: Parsed mDNS TXT record data (optional)
+    ///   - portBannerData: Parsed port banner data (optional)
+    ///   - macAnalysisData: MAC address analysis data (optional)
+    /// - Returns: The most likely device type
+    public func inferWithEnhancedData(
+        signals: [Signal],
+        mdnsTXTData: MDNSTXTData?,
+        portBannerData: PortBannerData?,
+        macAnalysisData: MACAnalysisData?
+    ) async -> DeviceType {
+        let (deviceType, _) = await inferTypeWithEnhancedData(
+            signals: signals,
+            mdnsTXTData: mdnsTXTData,
+            portBannerData: portBannerData,
+            macAnalysisData: macAnalysisData
+        )
+        return deviceType
     }
 }

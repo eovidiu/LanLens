@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1A2B3C4D5E6F7A8B9C0D1E2F /* MDNSTXTCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7A8B9C0D1E30 /* MDNSTXTCard.swift */; };
+		2B3C4D5E6F7A8B9C0D1E2F3A /* MACAnalysisCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B3C4D5E6F7A8B9C0D1E2F3B /* MACAnalysisCard.swift */; };
+		91A082AA20A03AEE870F3230 /* SecurityBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07CF633FFBC840F10B4E573 /* SecurityBadge.swift */; };
+		A1B2C3D4E5F60718091A2B3C /* TooltipModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F60718091A2B3C4D5E6F /* TooltipModifier.swift */; };
+		AD9B0D89CC7A46004874075A /* PortBannerCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42E34D2DF72FB00F614941E8 /* PortBannerCard.swift */; };
 		APP001 /* LanLensMenuBarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRC001 /* LanLensMenuBarApp.swift */; };
 		APP002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRC002 /* AppState.swift */; };
 		APP003 /* UserPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRC003 /* UserPreferences.swift */; };
@@ -22,12 +27,23 @@
 		APP013 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRC013 /* NotificationService.swift */; };
 		APP014 /* LaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRC014 /* LaunchAtLoginService.swift */; };
 		APP015 /* Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRC015 /* Colors.swift */; };
+		C3EFF323654E09C1A996C3E0 /* BehaviorBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7976CC6C3389FF63D1110272 /* BehaviorBadge.swift */; };
+		CBA182D65A8EB4D86AE3974E /* BehaviorProfileCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D76838976FF8D8648C9C67CA /* BehaviorProfileCard.swift */; };
+		F763B6FABCB80AF0CD9DE0D9 /* SecurityPostureCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0143840A4151C2CCCAFF4BA /* SecurityPostureCard.swift */; };
 		FWK001 /* LanLensCore in Frameworks */ = {isa = PBXBuildFile; productRef = PKG001 /* LanLensCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1A2B3C4D5E6F7A8B9C0D1E30 /* MDNSTXTCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MDNSTXTCard.swift; sourceTree = "<group>"; };
+		2B3C4D5E6F7A8B9C0D1E2F3B /* MACAnalysisCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MACAnalysisCard.swift; sourceTree = "<group>"; };
+		42E34D2DF72FB00F614941E8 /* PortBannerCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PortBannerCard.swift; sourceTree = "<group>"; };
+		7976CC6C3389FF63D1110272 /* BehaviorBadge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BehaviorBadge.swift; sourceTree = "<group>"; };
+		D4E5F60718091A2B3C4D5E6F /* TooltipModifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TooltipModifier.swift; sourceTree = "<group>"; };
+		C0143840A4151C2CCCAFF4BA /* SecurityPostureCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SecurityPostureCard.swift; sourceTree = "<group>"; };
+		C07CF633FFBC840F10B4E573 /* SecurityBadge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SecurityBadge.swift; sourceTree = "<group>"; };
 		CFG001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CFG002 /* LanLensApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LanLensApp.entitlements; sourceTree = "<group>"; };
+		D76838976FF8D8648C9C67CA /* BehaviorProfileCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BehaviorProfileCard.swift; sourceTree = "<group>"; };
 		PRD001 /* LanLensApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LanLensApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		SRC001 /* LanLensMenuBarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanLensMenuBarApp.swift; sourceTree = "<group>"; };
 		SRC002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
@@ -107,6 +123,14 @@
 				SRC009 /* ScoreIndicator.swift */,
 				SRC010 /* DeviceIcon.swift */,
 				SRC011 /* StatusIndicator.swift */,
+				D4E5F60718091A2B3C4D5E6F /* TooltipModifier.swift */,
+				C07CF633FFBC840F10B4E573 /* SecurityBadge.swift */,
+				C0143840A4151C2CCCAFF4BA /* SecurityPostureCard.swift */,
+				7976CC6C3389FF63D1110272 /* BehaviorBadge.swift */,
+				D76838976FF8D8648C9C67CA /* BehaviorProfileCard.swift */,
+				42E34D2DF72FB00F614941E8 /* PortBannerCard.swift */,
+				1A2B3C4D5E6F7A8B9C0D1E30 /* MDNSTXTCard.swift */,
+				2B3C4D5E6F7A8B9C0D1E2F3B /* MACAnalysisCard.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -194,7 +218,7 @@
 			);
 			mainGroup = GRP000;
 			packageReferences = (
-				PKG100 /* XCLocalSwiftPackageReference "../" */,
+				PKG100 /* XCLocalSwiftPackageReference ".." */,
 			);
 			productRefGroup = GRP100 /* Products */;
 			projectDirPath = "";
@@ -235,6 +259,14 @@
 				APP013 /* NotificationService.swift in Sources */,
 				APP014 /* LaunchAtLoginService.swift in Sources */,
 				APP015 /* Colors.swift in Sources */,
+				A1B2C3D4E5F60718091A2B3C /* TooltipModifier.swift in Sources */,
+				91A082AA20A03AEE870F3230 /* SecurityBadge.swift in Sources */,
+				F763B6FABCB80AF0CD9DE0D9 /* SecurityPostureCard.swift in Sources */,
+				C3EFF323654E09C1A996C3E0 /* BehaviorBadge.swift in Sources */,
+				CBA182D65A8EB4D86AE3974E /* BehaviorProfileCard.swift in Sources */,
+				AD9B0D89CC7A46004874075A /* PortBannerCard.swift in Sources */,
+				1A2B3C4D5E6F7A8B9C0D1E2F /* MDNSTXTCard.swift in Sources */,
+				2B3C4D5E6F7A8B9C0D1E2F3A /* MACAnalysisCard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -439,7 +471,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		PKG100 /* XCLocalSwiftPackageReference "../" */ = {
+		PKG100 /* XCLocalSwiftPackageReference ".." */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../;
 		};
