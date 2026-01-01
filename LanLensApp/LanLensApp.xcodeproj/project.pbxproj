@@ -11,6 +11,8 @@
 		2B3C4D5E6F7A8B9C0D1E2F3A /* MACAnalysisCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B3C4D5E6F7A8B9C0D1E2F3B /* MACAnalysisCard.swift */; };
 		91A082AA20A03AEE870F3230 /* SecurityBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07CF633FFBC840F10B4E573 /* SecurityBadge.swift */; };
 		A1B2C3D4E5F60718091A2B3C /* TooltipModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F60718091A2B3C4D5E6F /* TooltipModifier.swift */; };
+		A966975B2F06A33400EAAA03 /* icon_1024.png in Resources */ = {isa = PBXBuildFile; fileRef = A96697592F06A33400EAAA03 /* icon_1024.png */; };
+		A966975C2F06A33400EAAA03 /* Contents.json in Resources */ = {isa = PBXBuildFile; fileRef = A96697582F06A33400EAAA03 /* Contents.json */; };
 		AD9B0D89CC7A46004874075A /* PortBannerCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42E34D2DF72FB00F614941E8 /* PortBannerCard.swift */; };
 		APP001 /* LanLensMenuBarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRC001 /* LanLensMenuBarApp.swift */; };
 		APP002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = SRC002 /* AppState.swift */; };
@@ -38,11 +40,13 @@
 		2B3C4D5E6F7A8B9C0D1E2F3B /* MACAnalysisCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MACAnalysisCard.swift; sourceTree = "<group>"; };
 		42E34D2DF72FB00F614941E8 /* PortBannerCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PortBannerCard.swift; sourceTree = "<group>"; };
 		7976CC6C3389FF63D1110272 /* BehaviorBadge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BehaviorBadge.swift; sourceTree = "<group>"; };
-		D4E5F60718091A2B3C4D5E6F /* TooltipModifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TooltipModifier.swift; sourceTree = "<group>"; };
+		A96697582F06A33400EAAA03 /* Contents.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Contents.json; sourceTree = "<group>"; };
+		A96697592F06A33400EAAA03 /* icon_1024.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = icon_1024.png; sourceTree = "<group>"; };
 		C0143840A4151C2CCCAFF4BA /* SecurityPostureCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SecurityPostureCard.swift; sourceTree = "<group>"; };
 		C07CF633FFBC840F10B4E573 /* SecurityBadge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SecurityBadge.swift; sourceTree = "<group>"; };
 		CFG001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CFG002 /* LanLensApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LanLensApp.entitlements; sourceTree = "<group>"; };
+		D4E5F60718091A2B3C4D5E6F /* TooltipModifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TooltipModifier.swift; sourceTree = "<group>"; };
 		D76838976FF8D8648C9C67CA /* BehaviorProfileCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BehaviorProfileCard.swift; sourceTree = "<group>"; };
 		PRD001 /* LanLensApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LanLensApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		SRC001 /* LanLensMenuBarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanLensMenuBarApp.swift; sourceTree = "<group>"; };
@@ -74,9 +78,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A966975A2F06A33400EAAA03 /* AppIcon.appiconset */ = {
+			isa = PBXGroup;
+			children = (
+				A96697582F06A33400EAAA03 /* Contents.json */,
+				A96697592F06A33400EAAA03 /* icon_1024.png */,
+			);
+			path = AppIcon.appiconset;
+			sourceTree = "<group>";
+		};
 		GRP000 = {
 			isa = PBXGroup;
 			children = (
+				A966975A2F06A33400EAAA03 /* AppIcon.appiconset */,
 				GRP001 /* LanLensApp */,
 				GRP100 /* Products */,
 			);
@@ -218,7 +232,7 @@
 			);
 			mainGroup = GRP000;
 			packageReferences = (
-				PKG100 /* XCLocalSwiftPackageReference ".." */,
+				PKG100 /* XCLocalSwiftPackageReference "../" */,
 			);
 			productRefGroup = GRP100 /* Products */;
 			projectDirPath = "";
@@ -234,6 +248,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A966975B2F06A33400EAAA03 /* icon_1024.png in Resources */,
+				A966975C2F06A33400EAAA03 /* Contents.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -471,7 +487,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		PKG100 /* XCLocalSwiftPackageReference ".." */ = {
+		PKG100 /* XCLocalSwiftPackageReference "../" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../;
 		};
