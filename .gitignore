@@ -1,6 +1,8 @@
 # Xcode
 .DS_Store
 build/
+*.app/
+releases/
 DerivedData/
 *.xcuserstate
 *.xccheckout
