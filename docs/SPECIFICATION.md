@@ -40,7 +40,7 @@ LanLens is a native macOS menu bar application that autonomously discovers, iden
 
 ## 2. Document Structure
 
-This specification is organized into three linked documents:
+This specification is organized into linked documents:
 
 | Document | Purpose | Location |
 |----------|---------|----------|
@@ -50,6 +50,13 @@ This specification is organized into three linked documents:
 | **data-models.md** | Complete data structure reference | `/docs/data-models.md` |
 | **inference-capabilities.md** | Device type inference documentation | `/docs/inference-capabilities.md` |
 | **device-fingerprinting.md** | UPnP and Fingerbank integration | `/docs/device-fingerprinting.md` |
+
+### Feature Specifications
+
+| Document | Purpose | Location |
+|----------|---------|----------|
+| **fingerprint-enhancements.md** | DHCP, JA3/JA4, and offline cache features | `/docs/specs/fingerprint-enhancements.md` |
+| **fingerprint-enhancements-checklist.md** | Implementation tracking | `/docs/specs/fingerprint-enhancements-checklist.md` |
 
 ---
 
@@ -246,11 +253,13 @@ The `SecurityPostureAssessor` evaluates discovered devices for:
 
 ### 7.2 Future Enhancements
 
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| iOS companion app | P3 | Server discovery via Bonjour, device list |
-| DHCP fingerprint capture | P3 | Would improve Fingerbank accuracy |
-| SNMP discovery | P4 | For network equipment with SNMP enabled |
+| Feature | Priority | Specification | Notes |
+|---------|----------|---------------|-------|
+| Offline Fingerbank Cache | P1 | [specs/fingerprint-enhancements.md](specs/fingerprint-enhancements.md) | Bundled database for offline device identification |
+| DHCP Fingerprint Capture | P2 | [specs/fingerprint-enhancements.md](specs/fingerprint-enhancements.md) | Passive DHCP Option 55 capture |
+| TLS/JA3 Fingerprinting | P2 | [specs/fingerprint-enhancements.md](specs/fingerprint-enhancements.md) | TLS Client Hello fingerprinting |
+| iOS companion app | P3 | Not specified | Server discovery via Bonjour, device list |
+| SNMP discovery | P4 | Not specified | For network equipment with SNMP enabled |
 
 ### 7.3 Documentation Status
 
@@ -262,6 +271,8 @@ The `SecurityPostureAssessor` evaluates discovered devices for:
 | Data models | Complete | data-models.md |
 | Inference capabilities | Complete | inference-capabilities.md |
 | Fingerprinting guide | Complete | device-fingerprinting.md |
+| Fingerprint enhancements spec | Complete | specs/fingerprint-enhancements.md |
+| Implementation checklist | Complete | specs/fingerprint-enhancements-checklist.md |
 
 ---
 

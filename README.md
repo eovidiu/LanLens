@@ -254,6 +254,19 @@ LanLens/
     └── data-models.md             # Data structure documentation
 ```
 
+## Planned Features
+
+The following enhancements are planned for future releases:
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Offline Fingerbank Cache** | Bundled fingerprint database for device identification without internet | Planned |
+| **DHCP Fingerprinting** | Passive DHCP Option 55 capture for improved device identification | Planned |
+| **TLS Fingerprinting** | JA3/JA4 fingerprints for device and application classification | Planned |
+| **iOS Companion App** | Remote access to LanLens data via REST API | Planned |
+
+See [docs/specs/fingerprint-enhancements.md](docs/specs/fingerprint-enhancements.md) for detailed specifications.
+
 ## Privacy
 
 - **Local-only by default**: All scanning happens on your local network
