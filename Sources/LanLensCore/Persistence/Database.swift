@@ -208,6 +208,22 @@ public final class DatabaseManager: DatabaseProtocol, @unchecked Sendable {
             """)
         }
 
+        // Version 6: DHCP fingerprint columns for device identification (Phase 2)
+        migrator.registerMigration("v6_dhcp_fingerprint") { db in
+            // Add DHCP fingerprint columns to devices table
+            try db.alter(table: "devices") { t in
+                // SHA256 hash of normalized Option 55 for efficient database lookup
+                t.add(column: "dhcpFingerprintHash", .text)
+                // Raw DHCP Option 55 string (e.g., "1,3,6,15,119,252")
+                t.add(column: "dhcpFingerprintString", .text)
+                // When the DHCP fingerprint was captured
+                t.add(column: "dhcpCapturedAt", .datetime)
+            }
+
+            // Index for efficient DHCP hash lookups
+            try db.create(index: "idx_devices_dhcp_hash", on: "devices", columns: ["dhcpFingerprintHash"])
+        }
+
         // Apply migrations
         try migrator.migrate(dbPool)
     }

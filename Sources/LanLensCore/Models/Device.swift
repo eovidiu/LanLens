@@ -41,6 +41,17 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
     /// Device behavior profile over time
     public var behaviorProfile: DeviceBehaviorProfile?
 
+    // MARK: - DHCP Fingerprint Data
+
+    /// DHCP Option 55 fingerprint hash (SHA256 of normalized Option 55 for database lookup)
+    public var dhcpFingerprintHash: String?
+
+    /// Raw DHCP Option 55 string (e.g., "1,3,6,15,119,252")
+    public var dhcpFingerprintString: String?
+
+    /// When DHCP fingerprint was captured
+    public var dhcpCapturedAt: Date?
+
     // MARK: - Network Source Information
 
     /// The network interface this device was discovered on (e.g., "en0")
@@ -71,6 +82,9 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         macAnalysis: MACAnalysisData? = nil,
         securityPosture: SecurityPostureData? = nil,
         behaviorProfile: DeviceBehaviorProfile? = nil,
+        dhcpFingerprintHash: String? = nil,
+        dhcpFingerprintString: String? = nil,
+        dhcpCapturedAt: Date? = nil,
         sourceInterface: String? = nil,
         subnet: String? = nil
     ) {
@@ -95,6 +109,9 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         self.macAnalysis = macAnalysis
         self.securityPosture = securityPosture
         self.behaviorProfile = behaviorProfile
+        self.dhcpFingerprintHash = dhcpFingerprintHash
+        self.dhcpFingerprintString = dhcpFingerprintString
+        self.dhcpCapturedAt = dhcpCapturedAt
         self.sourceInterface = sourceInterface
         self.subnet = subnet
     }

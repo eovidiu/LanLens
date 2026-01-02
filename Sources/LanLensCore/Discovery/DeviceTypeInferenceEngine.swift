@@ -20,10 +20,11 @@ public actor DeviceTypeInferenceEngine {
         case fingerprint
         case upnp
         case hostname
-        case mdnsTXT      // Parsed mDNS TXT records (high confidence)
-        case portBanner   // Parsed port banners (medium-high confidence)
-        case macAnalysis  // MAC address analysis (medium confidence)
-        case behavior     // Device presence/usage patterns
+        case mdnsTXT         // Parsed mDNS TXT records (high confidence)
+        case portBanner      // Parsed port banners (medium-high confidence)
+        case macAnalysis     // MAC address analysis (medium confidence)
+        case behavior        // Device presence/usage patterns
+        case dhcpFingerprint // DHCP Option 55 fingerprint (high confidence)
     }
     
     /// A signal suggesting a device type with associated confidence
@@ -44,16 +45,17 @@ public actor DeviceTypeInferenceEngine {
     /// Base confidence weights by signal source
     /// Higher values indicate more reliable sources
     private static let sourceWeights: [SignalSource: Double] = [
-        .fingerprint: 0.9,   // Fingerbank data is most reliable
-        .mdnsTXT: 0.85,      // Parsed mDNS TXT records are very informative
-        .upnp: 0.8,          // UPnP device descriptions are quite accurate
-        .portBanner: 0.75,   // Parsed port banners provide good device info
-        .mdns: 0.7,          // mDNS service types are good indicators
-        .ssdp: 0.7,          // SSDP headers are good indicators
-        .hostname: 0.6,      // Hostnames can be informative but less reliable
-        .macAnalysis: 0.60,  // MAC analysis is useful but less specific
-        .behavior: 0.6,      // Behavior patterns are informative but not definitive
-        .port: 0.5           // Port-based inference is least reliable
+        .fingerprint: 0.9,      // Fingerbank data is most reliable
+        .mdnsTXT: 0.85,         // Parsed mDNS TXT records are very informative
+        .upnp: 0.8,             // UPnP device descriptions are quite accurate
+        .portBanner: 0.75,      // Parsed port banners provide good device info
+        .mdns: 0.7,             // mDNS service types are good indicators
+        .ssdp: 0.7,             // SSDP headers are good indicators
+        .dhcpFingerprint: 0.65, // DHCP Option 55 fingerprint - per architecture doc
+        .hostname: 0.6,         // Hostnames can be informative but less reliable
+        .macAnalysis: 0.60,     // MAC analysis is useful but less specific
+        .behavior: 0.6,         // Behavior patterns are informative but not definitive
+        .port: 0.5              // Port-based inference is least reliable
     ]
     
     // MARK: - Main Inference Method
@@ -585,7 +587,31 @@ public actor DeviceTypeInferenceEngine {
         
         return signals
     }
-    
+
+    /// Create signals from DHCP fingerprint data.
+    ///
+    /// This method uses the DHCPFingerprintMatcher to analyze DHCP Option 55
+    /// fingerprints and generate inference signals.
+    ///
+    /// - Parameter option55: DHCP Option 55 fingerprint string (e.g., "1,3,6,15,119,252")
+    /// - Returns: Array of inferred signals
+    public func signalsFromDHCPFingerprint(_ option55: String) async -> [Signal] {
+        let matcher = DHCPFingerprintMatcher.shared
+        return await matcher.matchAndGenerateSignals(option55: option55)
+    }
+
+    /// Create signals from a pre-computed DHCP match result.
+    ///
+    /// Use this when you already have a match result from DHCPFingerprintMatcher
+    /// to avoid duplicate database lookups.
+    ///
+    /// - Parameter matchResult: A match result from DHCPFingerprintMatcher
+    /// - Returns: Array of inferred signals
+    public func signalsFromDHCPMatchResult(_ matchResult: DHCPFingerprintMatcher.MatchResult) async -> [Signal] {
+        let matcher = DHCPFingerprintMatcher.shared
+        return await matcher.generateSignals(from: matchResult)
+    }
+
     // MARK: - Convenience Methods
 
     /// Infer device type from all available data sources
