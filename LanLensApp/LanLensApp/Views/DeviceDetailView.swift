@@ -544,6 +544,8 @@ private struct FingerprintCard: View {
             Image(systemName: "server.rack")
         case .both:
             Image(systemName: "checkmark.seal.fill")
+        case .tlsFingerprint:
+            Image(systemName: "lock.shield")
         case .none:
             Image(systemName: "questionmark.circle")
         }
@@ -554,6 +556,7 @@ private struct FingerprintCard: View {
         case .upnp: return "UPnP"
         case .fingerbank: return "Fingerbank"
         case .both: return "UPnP + Fingerbank"
+        case .tlsFingerprint: return "TLS Fingerprint"
         case .none: return "Unknown"
         }
     }
