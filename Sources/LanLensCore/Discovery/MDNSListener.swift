@@ -19,6 +19,7 @@ public actor MDNSListener {
         public let type: String
         public let domain: String
         public let hostIP: String?
+        public let hostname: String?
         public let port: Int?
         public let txtRecords: [String: String]
 
@@ -151,7 +152,7 @@ public actor MDNSListener {
         let connection = NWConnection(to: endpoint, using: .tcp)
 
         // Quick timeout - we just want to resolve, not connect
-        let resolveTask = Task { () -> (String?, Int?) in
+        let resolveTask = Task { () -> (ip: String?, hostname: String?, port: Int?) in
             await withCheckedContinuation { continuation in
                 var resumed = false
 
@@ -163,8 +164,36 @@ public actor MDNSListener {
                         if let endpoint = connection.currentPath?.remoteEndpoint {
                             switch endpoint {
                             case .hostPort(let host, let port):
+                                var ip: String? = nil
+                                var hostname: String? = nil
+
+                                // Extract IP and hostname from the host
+                                switch host {
+                                case .ipv4(let addr):
+                                    var addrStr = "\(addr)"
+                                    // Strip interface suffix (e.g., "192.168.0.31%en0")
+                                    if let percentIndex = addrStr.firstIndex(of: "%") {
+                                        addrStr = String(addrStr[..<percentIndex])
+                                    }
+                                    ip = addrStr
+                                case .ipv6(let addr):
+                                    var addrStr = "\(addr)"
+                                    // Strip interface suffix
+                                    if let percentIndex = addrStr.firstIndex(of: "%") {
+                                        addrStr = String(addrStr[..<percentIndex])
+                                    }
+                                    // Skip loopback
+                                    if addrStr != "::1" && !addrStr.hasPrefix("fe80:") {
+                                        ip = addrStr
+                                    }
+                                case .name(let hostName, _):
+                                    hostname = hostName
+                                @unknown default:
+                                    break
+                                }
+
                                 resumed = true
-                                continuation.resume(returning: (host.debugDescription, Int(port.rawValue)))
+                                continuation.resume(returning: (ip, hostname, Int(port.rawValue)))
                             default:
                                 break
                             }
@@ -173,7 +202,7 @@ public actor MDNSListener {
                     case .failed, .cancelled:
                         if !resumed {
                             resumed = true
-                            continuation.resume(returning: (nil, nil))
+                            continuation.resume(returning: (nil, nil, nil))
                         }
                     default:
                         break
@@ -188,26 +217,55 @@ public actor MDNSListener {
                     if !resumed {
                         resumed = true
                         connection.cancel()
-                        continuation.resume(returning: (nil, nil))
+                        continuation.resume(returning: (nil, nil, nil))
                     }
                 }
             }
         }
 
-        let (hostIP, port) = await resolveTask.value
+        let result = await resolveTask.value
+
+        // Derive hostname from service name if not already set
+        // e.g., "Living Room Speaker" -> potential hostname
+        var finalHostname = result.hostname
+        if finalHostname == nil {
+            // Try to derive a meaningful hostname from the service name
+            // Strip common suffixes like ".local" and clean up
+            finalHostname = deriveHostnameFromServiceName(name)
+        }
 
         let service = MDNSService(
             name: name,
             type: type,
             domain: domain,
-            hostIP: hostIP,
-            port: port,
+            hostIP: result.ip,
+            hostname: finalHostname,
+            port: result.port,
             txtRecords: [:] // TXT records would require dns-sd command for full parsing
         )
 
         let key = "\(name).\(type).\(domain)"
         discoveredServices[key] = service
         onServiceDiscovered?(service)
+    }
+
+    /// Derive a hostname from a service name
+    /// Service names often are the device's display name which can be used as hostname
+    private func deriveHostnameFromServiceName(_ name: String) -> String? {
+        var hostname = name
+
+        // Handle prefixed names like "0E5F46A40FBE@Ovidiu's MacBook Pro"
+        if let atIndex = hostname.firstIndex(of: "@") {
+            hostname = String(hostname[hostname.index(after: atIndex)...])
+        }
+
+        // Clean up the name - remove .local suffix if present
+        if hostname.hasSuffix(".local") {
+            hostname = String(hostname.dropLast(6))
+        }
+
+        // Return the cleaned name as the hostname
+        return hostname.isEmpty ? nil : hostname
     }
 }
 

@@ -219,14 +219,31 @@ public actor DeviceStore: DeviceStoreProtocol {
     /// Merge two devices, preserving historical data from existing and updates from new
     private func mergeDevices(existing: Device, new: Device) -> Device {
         var merged = new
-        
+
+        // Only update hostname if new value is non-nil AND non-empty
+        // This prevents overwriting a valid hostname with nil/empty from subsequent discoveries
+        let mergedHostname: String?
+        if let newHostname = new.hostname, !newHostname.isEmpty {
+            mergedHostname = newHostname
+        } else {
+            mergedHostname = existing.hostname
+        }
+
+        // Only update vendor if new value is non-nil AND non-empty
+        let mergedVendor: String?
+        if let newVendor = new.vendor, !newVendor.isEmpty {
+            mergedVendor = newVendor
+        } else {
+            mergedVendor = existing.vendor
+        }
+
         // Preserve first seen date
         merged = Device(
             id: existing.id,  // Keep original UUID
             mac: existing.mac,
             ip: new.ip,
-            hostname: new.hostname ?? existing.hostname,
-            vendor: new.vendor ?? existing.vendor,
+            hostname: mergedHostname,
+            vendor: mergedVendor,
             firstSeen: existing.firstSeen,  // Always preserve first seen
             lastSeen: new.lastSeen,
             isOnline: new.isOnline,
@@ -239,7 +256,7 @@ public actor DeviceStore: DeviceStoreProtocol {
             userLabel: new.userLabel ?? existing.userLabel,  // Preserve user customizations
             fingerprint: new.fingerprint ?? existing.fingerprint
         )
-        
+
         return merged
     }
     

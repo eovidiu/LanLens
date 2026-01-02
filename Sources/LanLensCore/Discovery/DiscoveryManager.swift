@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 /// Orchestrates all discovery methods and maintains device list
 /// Uses DeviceStore as the single source of truth for device data
@@ -84,6 +87,18 @@ public actor DiscoveryManager {
                 await self?.handleSSDPDevice(device)
             }
         }
+
+        // Also run DNS-SD discovery for more reliable hostname resolution
+        // DNS-SD uses the dns-sd command which is more reliable than NWBrowser for some service types
+        Log.debug("Starting DNS-SD discovery...", category: .mdns)
+        Task { [weak self] in
+            await DNSSDScanner.shared.browse(duration: 10.0) { service in
+                Task { [weak self] in
+                    await self?.handleDNSSDService(service)
+                }
+            }
+        }
+
         Log.info("Passive discovery started successfully", category: .discovery)
     }
 
@@ -504,6 +519,12 @@ public actor DiscoveryManager {
 
             if let entry = entries.first(where: { $0.ip == cleanIP }) {
                 var device = await updateOrCreateDevice(mac: entry.mac, ip: cleanIP, source: "mDNS", services: [service.type])
+
+                // Set hostname from mDNS service if we got one and device doesn't have one yet
+                if device.hostname == nil, let hostname = service.hostname, !hostname.isEmpty {
+                    Log.debug("mDNS: Setting hostname to '\(hostname)' for device \(device.mac)", category: .mdns)
+                    device.hostname = hostname
+                }
 
                 // Add the service
                 let discoveredService = DiscoveredService(
@@ -975,6 +996,14 @@ public actor DiscoveryManager {
             Task {
                 await WebSocketManager.shared.broadcastDeviceDiscovered(deviceToSend)
             }
+
+            // Try reverse DNS lookup asynchronously for devices without hostname
+            // This runs in background and updates the device if successful
+            let macForLookup = normalizedMAC
+            Task { [weak self] in
+                await self?.tryResolveHostname(for: macForLookup)
+            }
+
             return device
         }
     }
@@ -1120,5 +1149,100 @@ public actor DiscoveryManager {
         }
 
         return merged
+    }
+
+    // MARK: - Reverse DNS Lookup
+
+    /// Perform reverse DNS lookup to get hostname from IP address
+    /// Uses getnameinfo for proper reverse DNS resolution
+    private func reverseDNSLookup(ip: String) async -> String? {
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                var hints = addrinfo()
+                hints.ai_flags = AI_NUMERICHOST
+                hints.ai_family = AF_UNSPEC
+
+                var result: UnsafeMutablePointer<addrinfo>?
+                let status = getaddrinfo(ip, nil, &hints, &result)
+
+                guard status == 0, let addrInfo = result else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                defer { freeaddrinfo(result) }
+
+                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+
+                let nameStatus = getnameinfo(
+                    addrInfo.pointee.ai_addr,
+                    addrInfo.pointee.ai_addrlen,
+                    &hostname,
+                    socklen_t(hostname.count),
+                    nil,
+                    0,
+                    NI_NAMEREQD
+                )
+
+                if nameStatus == 0 {
+                    let name = String(cString: hostname)
+                    // Clean up the hostname - remove .local suffix for display
+                    var cleanName = name
+                    if cleanName.hasSuffix(".local") {
+                        cleanName = String(cleanName.dropLast(6))
+                    }
+                    // Don't return if it's just the IP address
+                    if cleanName != ip && !cleanName.isEmpty {
+                        continuation.resume(returning: cleanName)
+                        return
+                    }
+                }
+
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    /// Try to resolve hostname for a device that doesn't have one
+    /// Called after initial discovery to enrich device data
+    public func tryResolveHostname(for mac: String) async {
+        guard var device = await deviceStore.getDevice(mac: mac) else { return }
+
+        // Skip if device already has a hostname
+        guard device.hostname == nil || device.hostname?.isEmpty == true else { return }
+
+        Log.debug("Attempting reverse DNS lookup for \(device.ip)", category: .discovery)
+
+        if let hostname = await reverseDNSLookup(ip: device.ip) {
+            Log.info("Reverse DNS resolved \(device.ip) to '\(hostname)'", category: .discovery)
+            device.hostname = hostname
+            try? await deviceStore.addOrUpdate(device: device)
+            onDeviceUpdate?(device, .updated)
+
+            // Broadcast device updated via WebSocket
+            let deviceToSend = device
+            Task {
+                await WebSocketManager.shared.broadcastDeviceUpdated(deviceToSend)
+            }
+        }
+    }
+
+    /// Try to resolve hostnames for all devices that don't have one
+    public func tryResolveAllHostnames() async {
+        let devices = await deviceStore.getDevices()
+        let devicesNeedingHostname = devices.filter { $0.hostname == nil || $0.hostname?.isEmpty == true }
+
+        guard !devicesNeedingHostname.isEmpty else { return }
+
+        Log.info("Attempting reverse DNS for \(devicesNeedingHostname.count) devices", category: .discovery)
+
+        // Process in parallel with limited concurrency
+        await withTaskGroup(of: Void.self) { group in
+            for device in devicesNeedingHostname {
+                group.addTask { [self] in
+                    await self.tryResolveHostname(for: device.mac)
+                }
+            }
+        }
     }
 }
