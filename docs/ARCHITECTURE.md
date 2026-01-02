@@ -186,36 +186,160 @@ public actor DIContainer {
 
 Implement a multi-protocol discovery strategy that combines passive and active techniques.
 
-### 5.2 Discovery Flow
+### 5.2 Discovery Flow Diagram
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     DISCOVERY PIPELINE                       │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │  ARP Table  │    │    mDNS     │    │    SSDP     │     │
-│  │  (passive)  │    │  (passive)  │    │  (passive)  │     │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘     │
-│         │                  │                  │             │
-│         └──────────────────┼──────────────────┘             │
-│                            │                                │
-│                            ▼                                │
-│              ┌────────────────────────┐                     │
-│              │   DiscoveryManager     │                     │
-│              │   (Device Registry)    │                     │
-│              └────────────────────────┘                     │
-│                            │                                │
-│                            ▼                                │
-│              ┌────────────────────────┐                     │
-│              │   Fingerprinting       │                     │
-│              │   (UPnP + Fingerbank)  │                     │
-│              └────────────────────────┘                     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph TRIGGERS["Discovery Triggers"]
+        T1["App Launch<br/>(if autoScanOnLaunch)"]
+        T2["Manual Scan<br/>(Scan Now button)"]
+        T3["Background Timer<br/>(scanIntervalMinutes)"]
+        T4["API Endpoint<br/>(POST /api/discover)"]
+    end
+
+    subgraph DISCOVERY["Parallel Discovery Sources"]
+        ARP["ARP Scanner<br/>/usr/sbin/arp -an"]
+        MDNS["mDNS Listener<br/>NWBrowser (28+ services)"]
+        DNSSD["DNS-SD Scanner<br/>/usr/bin/dns-sd"]
+        SSDP["SSDP Listener<br/>UDP 239.255.255.250:1900"]
+    end
+
+    subgraph CORRELATION["MAC-IP Correlation"]
+        LOOKUP["ARP Table Lookup<br/>(IP → MAC)"]
+    end
+
+    subgraph REGISTRY["Device Registry"]
+        DM["DiscoveryManager<br/>(Actor)"]
+        NORM["MAC Normalization<br/>(uppercase)"]
+    end
+
+    subgraph ENRICHMENT["Data Enrichment"]
+        MAC_V["MAC Vendor Lookup<br/>(OUI Database)"]
+        MAC_A["MAC Analyzer<br/>(randomization, VM, age)"]
+        REV_DNS["Reverse DNS<br/>(getnameinfo)"]
+        UPNP["UPnP Description<br/>(XML from LOCATION)"]
+        FB["Fingerbank API<br/>(opt-in, cloud)"]
+    end
+
+    subgraph ANALYSIS["Analysis & Classification"]
+        PORT["Port Scanner<br/>(nmap or socket)"]
+        BANNER["Banner Grabber<br/>(SSH/HTTP/RTSP)"]
+        TXT["mDNS TXT Analyzer<br/>(AirPlay/Cast/HomeKit)"]
+        SEC["Security Assessor<br/>(risk scoring)"]
+        BEHAV["Behavior Tracker<br/>(presence patterns)"]
+        INFER["Type Inference<br/>(signal aggregation)"]
+    end
+
+    subgraph PERSISTENCE["Persistence Layer"]
+        DS["DeviceStore<br/>(in-memory cache)"]
+        REPO["DeviceRepository<br/>(GRDB/SQLite)"]
+        PRES["PresenceRepository<br/>(behavior history)"]
+    end
+
+    subgraph OUTPUT["Output"]
+        UI["SwiftUI Views<br/>(via AppState)"]
+        WS["WebSocket<br/>(/api/ws)"]
+        API["REST API<br/>(/api/devices)"]
+    end
+
+    %% Trigger flow
+    T1 & T2 & T3 & T4 --> DM
+
+    %% Discovery sources feed into correlation/registry
+    ARP -->|"mac, ip, interface"| DM
+    MDNS -->|"service, hostname, ip, port, txt"| LOOKUP
+    DNSSD -->|"service, hostname, ip, port, txt"| LOOKUP
+    SSDP -->|"usn, location, server, ip"| LOOKUP
+    LOOKUP -->|"mac"| DM
+
+    %% Registry processing
+    DM --> NORM
+    NORM --> MAC_V
+    MAC_V -->|"vendor"| MAC_A
+    MAC_A -->|"macAnalysis"| DM
+
+    %% Enrichment
+    DM --> REV_DNS
+    REV_DNS -->|"hostname"| DM
+    SSDP -.->|"LOCATION URL"| UPNP
+    UPNP -->|"fingerprint (L1)"| DM
+    DM -.->|"if API key"| FB
+    FB -->|"fingerprint (L2)"| DM
+
+    %% Analysis (on-demand or async)
+    DM --> PORT
+    PORT -->|"openPorts"| BANNER
+    BANNER -->|"portBanners"| DM
+    DM --> TXT
+    TXT -->|"mdnsTXTRecords"| DM
+    DM --> SEC
+    SEC -->|"securityPosture"| DM
+    DM --> BEHAV
+    BEHAV <-->|"presence"| PRES
+    BEHAV -->|"behaviorProfile"| DM
+    DM --> INFER
+    INFER -->|"deviceType, smartScore"| DM
+
+    %% Persistence
+    DM --> DS
+    DS <--> REPO
+
+    %% Output
+    DS --> UI
+    DS --> WS
+    DS --> API
+
+    %% Styling
+    classDef trigger fill:#fff3e0,stroke:#e65100
+    classDef discovery fill:#e1f5fe,stroke:#01579b
+    classDef enrichment fill:#f3e5f5,stroke:#4a148c
+    classDef analysis fill:#e8f5e9,stroke:#1b5e20
+    classDef persistence fill:#fce4ec,stroke:#880e4f
+    classDef output fill:#e0f7fa,stroke:#006064
+
+    class T1,T2,T3,T4 trigger
+    class ARP,MDNS,DNSSD,SSDP,LOOKUP discovery
+    class MAC_V,MAC_A,REV_DNS,UPNP,FB enrichment
+    class PORT,BANNER,TXT,SEC,BEHAV,INFER analysis
+    class DS,REPO,PRES persistence
+    class UI,WS,API output
 ```
 
-### 5.3 Protocol Details
+### 5.3 Discovery Data Flow Summary
+
+| Stage | Component | Input | Output |
+|-------|-----------|-------|--------|
+| **1. Trigger** | App/Timer/API | User action or timer | Discovery request |
+| **2. Discovery** | ARP/mDNS/DNS-SD/SSDP | Network broadcasts | Raw device signals |
+| **3. Correlation** | ARP Lookup | IP address | MAC address (primary key) |
+| **4. Registry** | DiscoveryManager | Device signals | Normalized device record |
+| **5. Enrichment** | Vendor/Fingerprint | MAC, SSDP location | vendor, hostname, fingerprint |
+| **6. Analysis** | Port/Banner/Security | IP, ports | Risk assessment, banners |
+| **7. Classification** | Inference Engine | All signals | deviceType, smartScore |
+| **8. Persistence** | DeviceStore | Complete device | SQLite + memory cache |
+| **9. Output** | UI/WebSocket/API | Stored devices | User-visible results |
+
+### 5.4 Discovery Source → Device Field Mapping
+
+| Discovery Source | Device Fields Populated | Notes |
+|-----------------|------------------------|-------|
+| **ARP Scanner** | `mac`, `ip`, `sourceInterface`, `subnet` | Primary key (MAC) and basic network info |
+| **MAC Vendor Lookup** | `vendor` | From OUI database lookup |
+| **MAC Analyzer** | `macAnalysis.oui`, `macAnalysis.isRandomized`, `macAnalysis.vendorConfidence`, `macAnalysis.isVirtualMachine`, `macAnalysis.estimatedAge` | Randomization detection, VM detection |
+| **Reverse DNS** | `hostname` | From getnameinfo() system call |
+| **mDNS Listener** | `services[]`, `smartSignals[]`, `hostname` | Service types, ports, TXT records |
+| **DNS-SD Scanner** | `services[]`, `smartSignals[]`, `hostname` | More reliable hostname resolution |
+| **mDNS TXT Analyzer** | `mdnsTXTRecords.airplay`, `mdnsTXTRecords.googleCast`, `mdnsTXTRecords.homeKit`, `mdnsTXTRecords.raop` | Parsed capabilities from TXT records |
+| **SSDP Listener** | `services[]`, `smartSignals[]` | UPnP USN, server headers, LOCATION URL |
+| **UPnP Description** | `fingerprint.friendlyName`, `fingerprint.manufacturer`, `fingerprint.modelName`, `fingerprint.modelNumber`, `fingerprint.serialNumber`, `fingerprint.upnpDeviceType`, `fingerprint.upnpServices[]` | From device XML description |
+| **Fingerbank API** | `fingerprint.fingerbankDeviceName`, `fingerprint.fingerbankParents[]`, `fingerprint.fingerbankScore`, `fingerprint.operatingSystem`, `fingerprint.isMobile`, `fingerprint.isTablet` | Cloud-based identification (opt-in) |
+| **Port Scanner** | `openPorts[]` | Port number, protocol, state, service name |
+| **Banner Grabber** | `portBanners.ssh`, `portBanners.http`, `portBanners.rtsp` | Version info, server headers, auth detection |
+| **Security Assessor** | `securityPosture.riskLevel`, `securityPosture.riskScore`, `securityPosture.riskFactors[]`, `securityPosture.riskyPorts[]`, `securityPosture.recommendations[]` | Risk analysis based on ports, banners, hostname |
+| **Behavior Tracker** | `behaviorProfile.classification`, `behaviorProfile.uptimePercentage`, `behaviorProfile.peakHours[]`, `behaviorProfile.averageDailyUptime` | Presence patterns over time |
+| **Type Inference** | `deviceType`, `smartScore` | Aggregated from all signals with confidence weighting |
+
+### 5.5 Protocol Details
 
 | Protocol | Transport | Port | Trigger |
 |----------|-----------|------|---------|
@@ -225,7 +349,7 @@ Implement a multi-protocol discovery strategy that combines passive and active t
 | DNS-SD | UDP | 5353 | `dns-sd -B` + `dns-sd -L` |
 | Port Scan | TCP | Various | Socket connect or nmap |
 
-### 5.4 Service Types Monitored (28+)
+### 5.6 Service Types Monitored (28+)
 
 ```swift
 static let serviceTypes = [
