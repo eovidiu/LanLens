@@ -41,6 +41,14 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
     /// Device behavior profile over time
     public var behaviorProfile: DeviceBehaviorProfile?
 
+    // MARK: - Network Source Information
+
+    /// The network interface this device was discovered on (e.g., "en0")
+    public var sourceInterface: String?
+
+    /// The subnet this device belongs to in CIDR notation (e.g., "192.168.1.0/24")
+    public var subnet: String?
+
     public init(
         id: UUID = UUID(),
         mac: String,
@@ -62,7 +70,9 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         portBanners: PortBannerData? = nil,
         macAnalysis: MACAnalysisData? = nil,
         securityPosture: SecurityPostureData? = nil,
-        behaviorProfile: DeviceBehaviorProfile? = nil
+        behaviorProfile: DeviceBehaviorProfile? = nil,
+        sourceInterface: String? = nil,
+        subnet: String? = nil
     ) {
         self.id = id
         self.mac = mac.uppercased()
@@ -85,6 +95,8 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         self.macAnalysis = macAnalysis
         self.securityPosture = securityPosture
         self.behaviorProfile = behaviorProfile
+        self.sourceInterface = sourceInterface
+        self.subnet = subnet
     }
 
     /// Display name: user label > hostname > fingerprint name > vendor + MAC suffix

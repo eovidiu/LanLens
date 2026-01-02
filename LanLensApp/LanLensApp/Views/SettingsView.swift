@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import LanLensCore
 
 struct SettingsView: View {
@@ -16,8 +18,10 @@ struct SettingsView: View {
                     GeneralSettingsSection()
                     APIServerSettingsSection(appState: appState, preferences: preferences)
                     ScanningSettingsSection(preferences: preferences)
+                    NetworkInterfacesSettingsSection(preferences: preferences)
                     FingerprintingSettingsSection(preferences: preferences)
                     NotificationSettingsSection(preferences: preferences)
+                    ExportSection(appState: appState)
                     AboutSection(appState: appState)
                     Spacer(minLength: 20)
                 }
@@ -143,6 +147,183 @@ private struct ScanningSettingsSection: View {
     }
 }
 
+// MARK: - Network Interfaces Settings Section
+
+private struct NetworkInterfacesSettingsSection: View {
+    let preferences: UserPreferences
+    @State private var availableInterfaces: [NetworkInterfaceManager.NetworkInterface] = []
+    @State private var isLoading = true
+
+    var body: some View {
+        SettingsSectionView(title: "NETWORK INTERFACES") {
+            @Bindable var prefs = preferences
+
+            ToggleRow(title: "Multi-Interface Scanning", isOn: $prefs.multiInterfaceScanEnabled)
+
+            if preferences.multiInterfaceScanEnabled {
+                Divider()
+                    .background(Color.white.opacity(0.1))
+
+                if isLoading {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Loading interfaces...")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.lanLensSecondaryText)
+                    }
+                } else if availableInterfaces.isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.lanLensWarning)
+                        Text("No active network interfaces found")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.lanLensSecondaryText)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Select interfaces to scan:")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.lanLensSecondaryText)
+
+                        ForEach(availableInterfaces) { iface in
+                            NetworkInterfaceRow(
+                                interface: iface,
+                                isSelected: preferences.isNetworkInterfaceSelected(iface.id),
+                                onToggle: {
+                                    preferences.toggleNetworkInterface(iface.id)
+                                }
+                            )
+                        }
+                    }
+
+                    // Info text
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.lanLensSecondaryText)
+                        Text("Deselect all to scan all active interfaces automatically.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.lanLensSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 4)
+                }
+
+                // Refresh button
+                HStack {
+                    Spacer()
+                    Button {
+                        Task {
+                            await refreshInterfaces()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 10))
+                            Text("Refresh")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundStyle(Color.lanLensAccent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.lanLensSecondaryText)
+                    Text("Enable to scan multiple network interfaces (VLANs) simultaneously.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.lanLensSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .task {
+            if preferences.multiInterfaceScanEnabled {
+                await refreshInterfaces()
+            }
+        }
+        .onChange(of: preferences.multiInterfaceScanEnabled) { _, newValue in
+            if newValue {
+                Task {
+                    await refreshInterfaces()
+                }
+            }
+        }
+    }
+
+    private func refreshInterfaces() async {
+        isLoading = true
+        let interfaces = await NetworkInterfaceManager.shared.getAvailableInterfaces()
+        await MainActor.run {
+            availableInterfaces = interfaces
+            isLoading = false
+        }
+    }
+}
+
+// MARK: - Network Interface Row
+
+private struct NetworkInterfaceRow: View {
+    let interface: NetworkInterfaceManager.NetworkInterface
+    let isSelected: Bool
+    let onToggle: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 8) {
+                // Checkbox
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(isSelected ? Color.lanLensAccent : Color.lanLensSecondaryText)
+
+                // Interface info
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(interface.name)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white)
+
+                        Text("(\(interface.id))")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.lanLensSecondaryText)
+
+                        if interface.isActive {
+                            Circle()
+                                .fill(Color.lanLensSuccess)
+                                .frame(width: 6, height: 6)
+                        } else {
+                            Circle()
+                                .fill(Color.lanLensSecondaryText)
+                                .frame(width: 6, height: 6)
+                        }
+                    }
+
+                    Text("\(interface.ipAddress) - \(interface.cidr)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.lanLensSecondaryText)
+                }
+
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(isHovered ? Color.white.opacity(0.05) : Color.clear)
+            .cornerRadius(4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
 // MARK: - Fingerprinting Settings Section
 
 private struct FingerprintingSettingsSection: View {
@@ -226,6 +407,178 @@ private struct NotificationSettingsSection: View {
             ToggleRow(title: "New Device Detected", isOn: $prefs.notifyNewDevices)
             ToggleRow(title: "Device Went Offline", isOn: $prefs.notifyDeviceOffline)
         }
+    }
+}
+
+// MARK: - Export Section
+
+private struct ExportSection: View {
+    let appState: AppState
+    @State private var isExporting = false
+    @State private var showFormatPicker = false
+    @State private var exportMessage: String?
+    @State private var isSuccess = false
+
+    var body: some View {
+        SettingsSectionView(title: "DATA EXPORT") {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Export Device Inventory")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white)
+                    Text("\(appState.deviceCount) devices available")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.lanLensSecondaryText)
+                }
+
+                Spacer()
+
+                if isExporting {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .frame(width: 60)
+                } else {
+                    Button {
+                        showFormatPicker = true
+                    } label: {
+                        Text("Export")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(appState.deviceCount > 0 ? Color.lanLensAccent : Color.lanLensSecondaryText)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(appState.deviceCount == 0)
+                    .popover(isPresented: $showFormatPicker, arrowEdge: .bottom) {
+                        ExportFormatPicker(
+                            onSelect: { format in
+                                showFormatPicker = false
+                                Task {
+                                    await performExport(format: format)
+                                }
+                            },
+                            onCancel: {
+                                showFormatPicker = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            // Status message
+            if let message = exportMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isSuccess ? Color.lanLensSuccess : Color.lanLensWarning)
+                    Text(message)
+                        .font(.system(size: 10))
+                        .foregroundStyle(isSuccess ? Color.lanLensSuccess : Color.lanLensWarning)
+                    Spacer()
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private func performExport(format: ExportFormat) async {
+        isExporting = true
+        exportMessage = nil
+
+        // Create save panel
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = format == .json ? [.json] : [.commaSeparatedText]
+        savePanel.nameFieldStringValue = "lanlens-export.\(format.fileExtension)"
+        savePanel.title = "Export Device Inventory"
+        savePanel.message = "Choose where to save the \(format.displayName) export file"
+
+        let response = await savePanel.beginSheetModal(for: NSApp.keyWindow ?? NSApp.windows.first!)
+
+        if response == .OK, let url = savePanel.url {
+            do {
+                let devices = appState.devices
+                let data = try await ExportService.shared.exportDevices(devices, format: format)
+                try data.write(to: url, options: .atomic)
+
+                await MainActor.run {
+                    isSuccess = true
+                    exportMessage = "Exported \(devices.count) devices"
+                    clearMessageAfterDelay()
+                }
+            } catch {
+                await MainActor.run {
+                    isSuccess = false
+                    exportMessage = "Export failed: \(error.localizedDescription)"
+                    clearMessageAfterDelay()
+                }
+            }
+        }
+
+        isExporting = false
+    }
+
+    private func clearMessageAfterDelay() {
+        Task {
+            try? await Task.sleep(for: .seconds(5))
+            await MainActor.run {
+                withAnimation {
+                    exportMessage = nil
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Export Format Picker
+
+private struct ExportFormatPicker: View {
+    let onSelect: (ExportFormat) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Select Format")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.lanLensSecondaryText)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+
+            ForEach(ExportFormat.allCases, id: \.rawValue) { format in
+                Button {
+                    onSelect(format)
+                } label: {
+                    HStack {
+                        Image(systemName: format == .json ? "curlybraces" : "tablecells")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.lanLensAccent)
+                            .frame(width: 20)
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(format.displayName)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white)
+                            Text(format == .json ? "Full device data" : "Spreadsheet compatible")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color.lanLensSecondaryText)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if format != ExportFormat.allCases.last {
+                    Divider()
+                        .background(Color.white.opacity(0.1))
+                        .padding(.horizontal, 12)
+                }
+            }
+        }
+        .frame(width: 180)
+        .padding(.bottom, 8)
+        .background(Color.lanLensCard)
     }
 }
 

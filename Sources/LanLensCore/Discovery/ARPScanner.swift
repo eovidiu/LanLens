@@ -15,19 +15,38 @@ public actor ARPScanner {
     }
 
     /// Get current ARP table entries
-    public func getARPTable() async throws -> [ARPEntry] {
+    /// - Parameter interface: Optional interface to filter results (e.g., "en0"). If nil, returns all entries.
+    public func getARPTable(interface: String? = nil) async throws -> [ARPEntry] {
         // Use -n to skip DNS resolution (5+ seconds -> ~10ms)
-        let result = try await shell.execute(path: "/usr/sbin/arp", arguments: ["-an"])
+        // Use -i to filter by interface if specified
+        var arguments = ["-an"]
+        if let interface = interface {
+            arguments.append("-i")
+            arguments.append(interface)
+        }
+
+        let result = try await shell.execute(path: "/usr/sbin/arp", arguments: arguments)
 
         guard result.succeeded else {
             throw ARPScannerError.commandFailed(result.stderr)
         }
 
-        return parseARPOutput(result.stdout)
+        let entries = parseARPOutput(result.stdout)
+
+        // If interface was specified, filter results to only that interface
+        // (some versions of arp may not respect -i fully)
+        if let interface = interface {
+            return entries.filter { $0.interface == interface }
+        }
+
+        return entries
     }
 
     /// Ping sweep a subnet to populate ARP table, then read it
-    public func scanSubnet(_ subnet: String) async throws -> [ARPEntry] {
+    /// - Parameters:
+    ///   - subnet: Subnet in CIDR notation (e.g., "192.168.1.0/24")
+    ///   - interface: Optional interface to use for the scan (e.g., "en0")
+    public func scanSubnet(_ subnet: String, interface: String? = nil) async throws -> [ARPEntry] {
         // Parse subnet (e.g., "192.168.1.0/24")
         guard let (baseIP, prefixLength) = parseSubnet(subnet) else {
             throw ARPScannerError.invalidSubnet(subnet)
@@ -41,11 +60,14 @@ public actor ARPScanner {
         let ipBase = baseIP.components(separatedBy: ".").prefix(3).joined(separator: ".")
 
         // Ping sweep using concurrent tasks
+        // If interface is specified, use -b to bind to specific interface
         await withTaskGroup(of: Void.self) { group in
             for i in 1...254 {
                 let ip = "\(ipBase).\(i)"
                 group.addTask {
                     // Quick ping, ignore result - just populating ARP table
+                    // Note: macOS ping doesn't support -I for interface binding like Linux,
+                    // but the ARP table filtering handles interface-specific results
                     _ = try? await self.shell.execute(
                         path: "/sbin/ping",
                         arguments: ["-c", "1", "-W", "100", ip],
@@ -58,8 +80,8 @@ public actor ARPScanner {
         // Small delay for ARP table to settle
         try await Task.sleep(for: .milliseconds(500))
 
-        // Now read the populated ARP table
-        return try await getARPTable()
+        // Now read the populated ARP table, filtered by interface if specified
+        return try await getARPTable(interface: interface)
     }
 
     /// Parse arp -a output

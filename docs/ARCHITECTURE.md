@@ -310,8 +310,9 @@ Use GRDB.swift for SQLite persistence instead of SQLite.swift.
 - **Async Support**: Native async/await support
 - **Performance**: Connection pooling via DatabasePool
 
-### 7.3 Schema (v1)
+### 7.3 Database Schema
 
+**Migration v1 (Initial):**
 ```sql
 CREATE TABLE devices (
     mac TEXT PRIMARY KEY,
@@ -337,6 +338,36 @@ CREATE INDEX idx_devices_lastSeen ON devices(lastSeen);
 CREATE INDEX idx_devices_isOnline ON devices(isOnline);
 ```
 
+**Migration v2 (Enhanced Inference):**
+```sql
+ALTER TABLE devices ADD COLUMN mdnsTXTRecords TEXT;
+ALTER TABLE devices ADD COLUMN portBanners TEXT;
+ALTER TABLE devices ADD COLUMN macAnalysis TEXT;
+ALTER TABLE devices ADD COLUMN securityPosture TEXT;
+ALTER TABLE devices ADD COLUMN behaviorProfile TEXT;
+```
+
+**Migration v3 (Network Source):**
+```sql
+ALTER TABLE devices ADD COLUMN networkSource TEXT;
+```
+
+**Migration v4 (Presence Records):**
+```sql
+CREATE TABLE presence_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mac TEXT NOT NULL REFERENCES devices(mac) ON DELETE CASCADE,
+    timestamp DATETIME NOT NULL,
+    isOnline BOOLEAN NOT NULL,
+    ipAddress TEXT,
+    availableServices TEXT NOT NULL DEFAULT '[]',
+    UNIQUE(mac, timestamp)
+);
+
+CREATE INDEX idx_presence_mac ON presence_records(mac);
+CREATE INDEX idx_presence_timestamp ON presence_records(timestamp);
+```
+
 ### 7.4 Three-Layer Architecture
 
 ```
@@ -357,16 +388,13 @@ CREATE INDEX idx_devices_isOnline ON devices(isOnline);
 └─────────────────────────────────────────┘
 ```
 
-### 7.5 Technical Debt: Schema Gap
+### 7.5 Schema Evolution
 
-The current schema (v1) does NOT persist enhanced inference data:
-- `mdnsTXTRecords`
-- `portBanners`
-- `macAnalysis`
-- `securityPosture`
-- `behaviorProfile`
-
-**Recommendation:** Add migration v2 to include these columns.
+The database schema has evolved through four migrations:
+- **v1**: Core device table with basic fields
+- **v2**: Enhanced inference data (mDNS TXT, port banners, MAC analysis, security posture, behavior profile)
+- **v3**: Network source tracking for multi-VLAN support
+- **v4**: Separate presence_records table for behavior history
 
 ---
 
@@ -507,9 +535,16 @@ public enum DeviceType: String, Codable, Sendable, CaseIterable {
 | GET | `/api/devices` | List all devices |
 | GET | `/api/devices/smart?minScore=20` | List smart devices |
 | GET | `/api/devices/:mac` | Get device by MAC |
+| GET | `/api/devices/export?format=json\|csv` | Export devices |
 | POST | `/api/discover/passive?duration=10` | Run passive discovery |
+| POST | `/api/discover/arp` | Read ARP table |
+| POST | `/api/discover/dnssd` | Run DNS-SD discovery |
 | POST | `/api/scan/ports/:mac` | Scan ports for device |
 | POST | `/api/scan/quick` | Quick scan all devices |
+| POST | `/api/scan/full` | Full scan all devices |
+| GET | `/api/scan/nmap-status` | Check nmap availability |
+| GET | `/api/tools` | Check tool status |
+| WS | `/api/ws` | WebSocket for real-time updates |
 
 ### 11.2 Authentication
 
@@ -524,17 +559,49 @@ struct AuthMiddleware: RouterMiddleware {
 }
 ```
 
+### 11.3 WebSocket Events
+
+The WebSocket endpoint at `/api/ws` broadcasts real-time events:
+
+| Event Type | Trigger | Payload |
+|------------|---------|---------|
+| `deviceDiscovered` | New device found | Device object |
+| `deviceUpdated` | Device info changed | Device object |
+| `deviceOffline` | Device went offline | Device object |
+| `scanStarted` | Scan begins | `{scanType, deviceCount: null}` |
+| `scanCompleted` | Scan ends | `{scanType, deviceCount}` |
+
+**Connection Authentication:**
+- Query parameter: `?token=YOUR_TOKEN`
+- Validates against configured API auth token
+
+### 11.4 Export Format
+
+**JSON Export:**
+```json
+{
+  "exportDate": "2026-01-02T12:00:00Z",
+  "deviceCount": 42,
+  "devices": [/* Device objects */]
+}
+```
+
+**CSV Export:**
+```csv
+mac,ip,hostname,vendor,deviceType,smartScore,isOnline,firstSeen,lastSeen
+00:11:22:33:44:55,192.168.1.100,device.local,Apple,computer,75,true,2026-01-01T00:00:00Z,2026-01-02T12:00:00Z
+```
+
 ---
 
 ## 12. Technical Debt Summary
 
-| Issue | Priority | Recommendation |
-|-------|----------|----------------|
-| SQLite.swift declared but unused | Low | Remove from Package.swift |
-| Enhanced inference models not persisted | Medium | Add DB migration v2 |
-| Dual cache (DeviceStore + DiscoveryManager) | Medium | Unify into single source |
-| Behavior tracking not persisted | Medium | Add PresenceRecord table |
-| No test coverage for core services | High | Add unit tests |
+| Issue | Priority | Status |
+|-------|----------|--------|
+| SQLite.swift declared but unused | Low | RESOLVED - Removed from Package.swift |
+| Enhanced inference models not persisted | Medium | RESOLVED - Migration v2 |
+| Behavior tracking not persisted | Medium | RESOLVED - Migration v4 |
+| Test coverage | High | RESOLVED - 159 unit tests across 6 test files |
 
 ---
 
@@ -563,3 +630,27 @@ struct AuthMiddleware: RouterMiddleware {
 **Decision:** Add optional Fingerbank integration as Level 2.
 
 **Consequences:** Better device identification, privacy consideration (opt-in by design).
+
+### ADR-004: WebSocket for Real-Time Updates
+
+**Status:** Accepted
+
+**Decision:** Implement WebSocket support using HummingbirdWebSocket for real-time device update broadcasts.
+
+**Consequences:** Enables iOS companion app and other clients to receive live updates without polling.
+
+### ADR-005: Multi-VLAN via Network Interface Manager
+
+**Status:** Accepted
+
+**Decision:** Implement network interface enumeration and selection for multi-VLAN scanning via `NetworkInterfaceManager`.
+
+**Consequences:** Users can scan devices across multiple VLANs/subnets when routing permits.
+
+### ADR-006: Behavior History Persistence
+
+**Status:** Accepted
+
+**Decision:** Store presence history in a separate `presence_records` table (migration v4) rather than JSON blob in devices table.
+
+**Consequences:** Efficient querying, automatic cleanup via foreign key cascade, better long-term storage.

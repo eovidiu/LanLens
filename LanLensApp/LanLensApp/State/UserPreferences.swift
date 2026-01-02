@@ -22,6 +22,8 @@ final class UserPreferences {
         static let notifyDeviceOffline = "LanLens.notifyDeviceOffline"
         static let fingerbankEnabled = "LanLens.fingerbankEnabled"
         static let fingerbankAPIKey = "LanLens.fingerbankAPIKey"
+        static let selectedNetworkInterfaces = "LanLens.selectedNetworkInterfaces"
+        static let multiInterfaceScanEnabled = "LanLens.multiInterfaceScanEnabled"
     }
 
     // MARK: - Defaults
@@ -42,6 +44,8 @@ final class UserPreferences {
         static let notifyDeviceOffline = false
         static let fingerbankEnabled = false
         static let fingerbankAPIKey = ""
+        static let selectedNetworkInterfaces: [String] = []  // Empty = scan all active
+        static let multiInterfaceScanEnabled = false
     }
 
     // MARK: - UserDefaults Instance
@@ -151,6 +155,42 @@ final class UserPreferences {
         didSet { defaults.set(fingerbankAPIKey, forKey: Keys.fingerbankAPIKey) }
     }
 
+    // MARK: - Network Interface Settings
+
+    /// Enable multi-interface/multi-VLAN scanning
+    var multiInterfaceScanEnabled: Bool {
+        didSet { defaults.set(multiInterfaceScanEnabled, forKey: Keys.multiInterfaceScanEnabled) }
+    }
+
+    /// Selected network interface IDs for scanning.
+    /// Empty array means scan all active interfaces.
+    var selectedNetworkInterfaces: [String] {
+        didSet { defaults.set(selectedNetworkInterfaces, forKey: Keys.selectedNetworkInterfaces) }
+    }
+
+    /// Convenience property to get selected interfaces as a Set
+    var selectedNetworkInterfaceSet: Set<String> {
+        Set(selectedNetworkInterfaces)
+    }
+
+    /// Toggle selection of a network interface
+    func toggleNetworkInterface(_ interfaceId: String) {
+        if selectedNetworkInterfaces.contains(interfaceId) {
+            selectedNetworkInterfaces.removeAll { $0 == interfaceId }
+        } else {
+            selectedNetworkInterfaces.append(interfaceId)
+        }
+    }
+
+    /// Check if an interface is selected
+    func isNetworkInterfaceSelected(_ interfaceId: String) -> Bool {
+        // If no interfaces are explicitly selected, all active interfaces are implicitly selected
+        if selectedNetworkInterfaces.isEmpty {
+            return true
+        }
+        return selectedNetworkInterfaces.contains(interfaceId)
+    }
+
     // MARK: - Computed Properties
 
     var autoScanIntervalSeconds: Int {
@@ -192,6 +232,8 @@ final class UserPreferences {
         self.notifyDeviceOffline = defaults.object(forKey: Keys.notifyDeviceOffline) as? Bool ?? Defaults.notifyDeviceOffline
         self.fingerbankEnabled = defaults.object(forKey: Keys.fingerbankEnabled) as? Bool ?? Defaults.fingerbankEnabled
         self.fingerbankAPIKey = defaults.string(forKey: Keys.fingerbankAPIKey) ?? Defaults.fingerbankAPIKey
+        self.multiInterfaceScanEnabled = defaults.object(forKey: Keys.multiInterfaceScanEnabled) as? Bool ?? Defaults.multiInterfaceScanEnabled
+        self.selectedNetworkInterfaces = defaults.stringArray(forKey: Keys.selectedNetworkInterfaces) ?? Defaults.selectedNetworkInterfaces
     }
 
     // MARK: - Reset
@@ -212,6 +254,8 @@ final class UserPreferences {
         notifyDeviceOffline = Defaults.notifyDeviceOffline
         fingerbankEnabled = Defaults.fingerbankEnabled
         fingerbankAPIKey = Defaults.fingerbankAPIKey
+        multiInterfaceScanEnabled = Defaults.multiInterfaceScanEnabled
+        selectedNetworkInterfaces = Defaults.selectedNetworkInterfaces
     }
 }
 

@@ -50,6 +50,9 @@ struct LanLensMenuBarApp: App {
         guard !hasInitialized else { return }
         hasInitialized = true
 
+        // Load persisted devices from storage first
+        await appState.loadPersistedDevices()
+
         // Request notification authorization
         await NotificationService.shared.requestAuthorization()
 

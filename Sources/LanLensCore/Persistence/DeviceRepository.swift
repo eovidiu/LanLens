@@ -60,6 +60,17 @@ public struct DeviceRecord: Codable, Sendable, FetchableRecord, PersistableRecor
     public var httpInfo: String?
     public var smartSignals: String
     public var fingerprint: String?
+
+    // Enhanced inference fields (JSON-encoded)
+    public var mdnsTXTRecords: String?
+    public var portBanners: String?
+    public var macAnalysis: String?
+    public var securityPosture: String?
+    public var behaviorProfile: String?
+
+    // Network source information
+    public var sourceInterface: String?
+    public var subnet: String?
     
     // MARK: - Conversion from Device
     
@@ -96,6 +107,41 @@ public struct DeviceRecord: Codable, Sendable, FetchableRecord, PersistableRecor
         } else {
             self.fingerprint = nil
         }
+
+        // Encode enhanced inference fields
+        if let mdnsTXTRecords = device.mdnsTXTRecords {
+            self.mdnsTXTRecords = String(data: try encoder.encode(mdnsTXTRecords), encoding: .utf8)
+        } else {
+            self.mdnsTXTRecords = nil
+        }
+
+        if let portBanners = device.portBanners {
+            self.portBanners = String(data: try encoder.encode(portBanners), encoding: .utf8)
+        } else {
+            self.portBanners = nil
+        }
+
+        if let macAnalysis = device.macAnalysis {
+            self.macAnalysis = String(data: try encoder.encode(macAnalysis), encoding: .utf8)
+        } else {
+            self.macAnalysis = nil
+        }
+
+        if let securityPosture = device.securityPosture {
+            self.securityPosture = String(data: try encoder.encode(securityPosture), encoding: .utf8)
+        } else {
+            self.securityPosture = nil
+        }
+
+        if let behaviorProfile = device.behaviorProfile {
+            self.behaviorProfile = String(data: try encoder.encode(behaviorProfile), encoding: .utf8)
+        } else {
+            self.behaviorProfile = nil
+        }
+
+        // Network source information (simple strings, no encoding needed)
+        self.sourceInterface = device.sourceInterface
+        self.subnet = device.subnet
     }
     
     // MARK: - Conversion to Device
@@ -126,11 +172,47 @@ public struct DeviceRecord: Codable, Sendable, FetchableRecord, PersistableRecor
         } else {
             decodedFingerprint = nil
         }
-        
+
+        // Decode enhanced inference fields
+        let decodedMdnsTXTRecords: MDNSTXTData?
+        if let json = mdnsTXTRecords, let data = json.data(using: .utf8) {
+            decodedMdnsTXTRecords = try? decoder.decode(MDNSTXTData.self, from: data)
+        } else {
+            decodedMdnsTXTRecords = nil
+        }
+
+        let decodedPortBanners: PortBannerData?
+        if let json = portBanners, let data = json.data(using: .utf8) {
+            decodedPortBanners = try? decoder.decode(PortBannerData.self, from: data)
+        } else {
+            decodedPortBanners = nil
+        }
+
+        let decodedMacAnalysis: MACAnalysisData?
+        if let json = macAnalysis, let data = json.data(using: .utf8) {
+            decodedMacAnalysis = try? decoder.decode(MACAnalysisData.self, from: data)
+        } else {
+            decodedMacAnalysis = nil
+        }
+
+        let decodedSecurityPosture: SecurityPostureData?
+        if let json = securityPosture, let data = json.data(using: .utf8) {
+            decodedSecurityPosture = try? decoder.decode(SecurityPostureData.self, from: data)
+        } else {
+            decodedSecurityPosture = nil
+        }
+
+        let decodedBehaviorProfile: DeviceBehaviorProfile?
+        if let json = behaviorProfile, let data = json.data(using: .utf8) {
+            decodedBehaviorProfile = try? decoder.decode(DeviceBehaviorProfile.self, from: data)
+        } else {
+            decodedBehaviorProfile = nil
+        }
+
         guard let deviceTypeEnum = DeviceType(rawValue: deviceType) else {
             throw DeviceRepositoryError.invalidDeviceType(deviceType)
         }
-        
+
         return Device(
             id: uuid,
             mac: mac,
@@ -147,7 +229,14 @@ public struct DeviceRecord: Codable, Sendable, FetchableRecord, PersistableRecor
             smartSignals: decodedSignals,
             deviceType: deviceTypeEnum,
             userLabel: userLabel,
-            fingerprint: decodedFingerprint
+            fingerprint: decodedFingerprint,
+            mdnsTXTRecords: decodedMdnsTXTRecords,
+            portBanners: decodedPortBanners,
+            macAnalysis: decodedMacAnalysis,
+            securityPosture: decodedSecurityPosture,
+            behaviorProfile: decodedBehaviorProfile,
+            sourceInterface: sourceInterface,
+            subnet: subnet
         )
     }
 }

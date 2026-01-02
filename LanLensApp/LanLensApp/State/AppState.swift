@@ -54,6 +54,12 @@ final class AppState {
 
     init() {}
 
+    /// Load persisted devices from storage on app startup
+    func loadPersistedDevices() async {
+        await DiscoveryManager.shared.loadPersistedDevices()
+        await refreshDevices()
+    }
+
     // MARK: - Filtered Cache Management
 
     private func updateFilteredDevicesCache() {

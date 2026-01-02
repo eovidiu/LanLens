@@ -1,5 +1,7 @@
 import Foundation
 import Hummingbird
+import HummingbirdWebSocket
+import NIOWebSocket
 import os
 
 /// REST API server for LanLens
@@ -30,6 +32,11 @@ public struct APIServer: Sendable {
     public func buildRouter() -> Router<BasicRequestContext> {
         let router = Router()
         let state = self.serverState
+
+        // Add auth middleware if configured
+        if let token = config.authToken {
+            router.middlewares.add(AuthMiddleware(token: token))
+        }
 
         // Health check - returns detailed server status
         router.get("/health") { _, _ -> Response in
@@ -174,24 +181,123 @@ public struct APIServer: Sendable {
             ))
         }
 
+        // Export endpoints
+        router.get("/api/devices/export") { request, _ -> Response in
+            let formatStr = request.uri.queryParameters.get("format") ?? "json"
+            guard let format = ExportFormat(rawValue: formatStr.lowercased()) else {
+                return Response(
+                    status: .badRequest,
+                    headers: [.contentType: "application/json"],
+                    body: .init(byteBuffer: ByteBuffer(string: "{\"error\":\"Invalid format. Use 'json' or 'csv'\"}"))
+                )
+            }
+
+            let devices = await DiscoveryManager.shared.getAllDevices()
+
+            do {
+                let data = try await ExportService.shared.exportDevices(devices, format: format)
+
+                // Set appropriate headers for file download
+                let filename = "lanlens-export.\(format.fileExtension)"
+                var headers: HTTPFields = [.contentType: format.mimeType]
+                headers[.contentDisposition] = "attachment; filename=\"\(filename)\""
+
+                return Response(
+                    status: .ok,
+                    headers: headers,
+                    body: .init(byteBuffer: ByteBuffer(data: data))
+                )
+            } catch {
+                return Response(
+                    status: .internalServerError,
+                    headers: [.contentType: "application/json"],
+                    body: .init(byteBuffer: ByteBuffer(string: "{\"error\":\"\(error.localizedDescription)\"}"))
+                )
+            }
+        }
+
         return router
     }
 
-    /// Start the API server (blocking)
-    public func run() async throws {
-        var router = buildRouter()
+    /// Build WebSocket router with /api/ws endpoint
+    public func buildWebSocketRouter() -> Router<BasicWebSocketRequestContext> {
+        let wsRouter = Router(context: BasicWebSocketRequestContext.self)
+        let authToken = config.authToken
 
-        // Add auth middleware if configured
-        if let token = config.authToken {
-            router.middlewares.add(AuthMiddleware(token: token))
+        wsRouter.ws("/api/ws") { request, context in
+            // Extract token from query parameter
+            let providedToken = request.uri.queryParameters.get("token")
+
+            // Validate auth if token is configured
+            if let requiredToken = authToken {
+                guard let provided = providedToken, provided == requiredToken else {
+                    Log.warning("WebSocket connection rejected: invalid or missing token", category: .websocket)
+                    return .dontUpgrade
+                }
+            }
+
+            return .upgrade([:])
+        } onUpgrade: { inbound, outbound, context in
+            // Generate connection ID
+            let connectionId = UUID()
+
+            // Register connection with WebSocketManager
+            await WebSocketManager.shared.addConnectionDirect(id: connectionId, outbound: outbound)
+
+            Log.info("WebSocket connection established: \(connectionId)", category: .websocket)
+
+            // Send welcome message
+            let welcomeMsg = "{\"type\":\"connected\",\"connectionId\":\"\(connectionId.uuidString)\"}"
+            try await outbound.write(.text(welcomeMsg))
+
+            // Handle incoming messages (ping/pong is handled automatically by the framework)
+            for try await frame in inbound {
+                switch frame.opcode {
+                case .text:
+                    // Log received messages for debugging
+                    let text = String(buffer: frame.data)
+                    Log.debug("Received WebSocket message: \(text)", category: .websocket)
+
+                    // Handle disconnect command
+                    if text == "disconnect" && frame.fin == true {
+                        Log.info("WebSocket client requested disconnect: \(connectionId)", category: .websocket)
+                        break
+                    }
+                case .binary, .continuation:
+                    // Binary and continuation frames are not used in our protocol
+                    break
+                }
+            }
+
+            // Clean up on disconnect
+            await WebSocketManager.shared.removeConnection(id: connectionId)
         }
 
+        return wsRouter
+    }
+
+    /// Start the API server with WebSocket support (blocking)
+    public func run() async throws {
+        let router = buildRouter()
+        let wsRouter = buildWebSocketRouter()
+
+        // Configure WebSocket auth if token is set
+        if let token = config.authToken {
+            // Configure WebSocket auth
+            await WebSocketManager.shared.setAuthToken(token)
+        }
+
+        // Build the application with WebSocket upgrade support
         let app = Application(
             router: router,
+            server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
             configuration: .init(address: .hostname(config.host, port: config.port))
         )
 
+        Log.info("Starting API server on http://\(config.host):\(config.port)", category: .api)
+        Log.info("WebSocket endpoint available at ws://\(config.host):\(config.port)/api/ws", category: .websocket)
         print("Starting API server on http://\(config.host):\(config.port)")
+        print("WebSocket endpoint: ws://\(config.host):\(config.port)/api/ws")
         if config.authToken != nil {
             print("Authentication enabled - use Bearer token or ?token= query parameter")
         }

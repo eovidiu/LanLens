@@ -1,8 +1,8 @@
 # LanLens System Specification
 
-**Version:** 1.0
+**Version:** 2.0
 **Date:** January 2, 2026
-**Status:** Active Development
+**Status:** Production Ready
 
 ---
 
@@ -44,9 +44,12 @@ This specification is organized into three linked documents:
 
 | Document | Purpose | Location |
 |----------|---------|----------|
-| **SPECIFICATION.md** (this document) | System overview, integration points, gaps | `/docs/SPECIFICATION.md` |
+| **SPECIFICATION.md** (this document) | System overview, features, integrations | `/docs/SPECIFICATION.md` |
 | **ARCHITECTURE.md** | Technical architecture, data flow, decisions | `/docs/ARCHITECTURE.md` |
 | **UX_SPECIFICATION.md** | UI design, components, interaction patterns | `/docs/UX_SPECIFICATION.md` |
+| **data-models.md** | Complete data structure reference | `/docs/data-models.md` |
+| **inference-capabilities.md** | Device type inference documentation | `/docs/inference-capabilities.md` |
+| **device-fingerprinting.md** | UPnP and Fingerbank integration | `/docs/device-fingerprinting.md` |
 
 ---
 
@@ -63,8 +66,8 @@ This specification is organized into three linked documents:
 | DNS-SD Discovery | IMPLEMENTED | `DNSSDScanner.swift` |
 | Port Scanning (Socket) | IMPLEMENTED | `PortScanner.swift` |
 | Port Scanning (nmap) | IMPLEMENTED | `PortScanner.swift` |
-| Multi-Subnet Support | NOT IMPLEMENTED | - |
-| Active Ping Sweep | PARTIAL | Available via CLI |
+| Multi-VLAN/Interface Support | IMPLEMENTED | `NetworkInterfaceManager.swift` |
+| Active Ping Sweep | IMPLEMENTED | Available via CLI and API |
 
 ### 3.2 Classification Features
 
@@ -103,10 +106,11 @@ This specification is organized into three linked documents:
 | List All Devices | IMPLEMENTED | `GET /api/devices` |
 | List Smart Devices | IMPLEMENTED | `GET /api/devices/smart` |
 | Get Device by MAC | IMPLEMENTED | `GET /api/devices/:mac` |
+| Export Devices | IMPLEMENTED | `GET /api/devices/export?format=json\|csv` |
 | Trigger Discovery | IMPLEMENTED | `POST /api/discover/passive` |
 | Trigger Port Scan | IMPLEMENTED | `POST /api/scan/ports/:mac` |
 | Token Authentication | IMPLEMENTED | `AuthMiddleware` |
-| WebSocket Updates | NOT IMPLEMENTED | - |
+| WebSocket Updates | IMPLEMENTED | `ws://host:port/api/ws` |
 
 ### 3.6 UI Features
 
@@ -124,9 +128,11 @@ This specification is organized into three linked documents:
 | Feature | Status | Implementation |
 |---------|--------|----------------|
 | SQLite Database | IMPLEMENTED | `DatabaseManager.swift` (GRDB) |
-| Device History | PARTIAL | First/last seen tracked |
+| Device History | IMPLEMENTED | First/last seen, presence records |
 | User Labels Persistence | IMPLEMENTED | `DeviceStore.swift` |
-| Export to JSON/CSV | NOT IMPLEMENTED | - |
+| Enhanced Inference Persistence | IMPLEMENTED | Migration v2 |
+| Behavior History | IMPLEMENTED | Migration v4, `presence_records` table |
+| Export to JSON/CSV | IMPLEMENTED | `ExportService.swift` |
 
 ---
 
@@ -232,30 +238,30 @@ The `SecurityPostureAssessor` evaluates discovered devices for:
 
 ### 7.1 Technical Debt
 
-| Issue | Severity | Description | Recommendation |
-|-------|----------|-------------|----------------|
-| SQLite.swift unused | Low | Declared in Package.swift but GRDB is used | Remove from dependencies |
-| Enhanced inference not persisted | Medium | `mdnsTXTRecords`, `portBanners`, `macAnalysis`, `securityPosture`, `behaviorProfile` not in DB schema | Add migration v2 |
-| Dual cache stores | Medium | `DeviceStore` cache and `DiscoveryManager.devices` registry are separate | Unify into single source of truth |
-| Behavior tracking volatile | Medium | Presence history lost on app restart | Persist to database |
+| Issue | Severity | Description | Status |
+|-------|----------|-------------|--------|
+| SQLite.swift unused | Low | Declared in Package.swift but GRDB is used | RESOLVED - Removed |
+| Enhanced inference not persisted | Medium | DB schema missing enhanced fields | RESOLVED - Migration v2 |
+| Behavior tracking volatile | Medium | Presence history lost on app restart | RESOLVED - Migration v4 |
 
-### 7.2 Missing Features
+### 7.2 Future Enhancements
 
-| Feature | Status | Priority | Notes |
-|---------|--------|----------|-------|
-| Multi-VLAN support | Missing | P1 | Requires network interface enumeration |
-| WebSocket real-time updates | Missing | P2 | For iOS companion app |
-| Export to JSON/CSV | Missing | P2 | Device inventory export |
-| iOS companion app | Not started | Phase 4 | Server discovery, device list |
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| iOS companion app | P3 | Server discovery via Bonjour, device list |
+| DHCP fingerprint capture | P3 | Would improve Fingerbank accuracy |
+| SNMP discovery | P4 | For network equipment with SNMP enabled |
 
-### 7.3 Documentation Gaps
+### 7.3 Documentation Status
 
-| Missing Documentation | Priority | Notes |
-|-----------------------|----------|-------|
-| API endpoint docs for fingerprint stats | Medium | Mentioned but not implemented |
-| Error handling documentation | Medium | No comprehensive error catalog |
-| Deployment guide | Low | Installation/distribution not documented |
-| Testing strategy | High | No test coverage targets documented |
+| Documentation | Status | Notes |
+|---------------|--------|-------|
+| System specification | Complete | This document |
+| Architecture decisions | Complete | ARCHITECTURE.md |
+| UX specification | Complete | UX_SPECIFICATION.md |
+| Data models | Complete | data-models.md |
+| Inference capabilities | Complete | inference-capabilities.md |
+| Fingerprinting guide | Complete | device-fingerprinting.md |
 
 ---
 
@@ -294,13 +300,16 @@ The `SecurityPostureAssessor` evaluates discovered devices for:
 
 ### 9.2 Test Coverage
 
-| Component | Unit Tests | Integration Tests |
-|-----------|------------|-------------------|
-| MACVendorLookup | Yes (2 tests) | No |
-| ARPScanner | No | No |
-| DiscoveryManager | No | No |
-| DeviceStore | No | No |
-| API endpoints | No | No |
+**Total Unit Tests: 159**
+
+| Component | Test File | Test Count |
+|-----------|-----------|------------|
+| DeviceTypeInferenceEngine | `DeviceTypeInferenceEngineTests.swift` | 41 |
+| MACAddressAnalyzer | `MACAddressAnalyzerTests.swift` | 43 |
+| SecurityPostureAssessor | `SecurityPostureAssessorTests.swift` | 34 |
+| ExportService | `ExportServiceTests.swift` | 23 |
+| SmartScore | `SmartScoreTests.swift` | 11 |
+| MACVendorLookup | `LanLensTests.swift` | 7 |
 
 ---
 
@@ -308,6 +317,7 @@ The `SecurityPostureAssessor` evaluates discovered devices for:
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 2.0 | 2026-01-02 | Project Curator | Updated to reflect complete implementation: WebSocket, Export, Multi-VLAN, 159 tests, DB migrations v2-v4 |
 | 1.0 | 2026-01-02 | Project Curator | Initial consolidated specification |
 
 ---

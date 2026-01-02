@@ -1,10 +1,13 @@
 import Foundation
 
 /// Orchestrates all discovery methods and maintains device list
+/// Uses DeviceStore as the single source of truth for device data
 public actor DiscoveryManager {
     public static let shared = DiscoveryManager()
 
-    private var devices: [String: Device] = [:] // Keyed by MAC address
+    /// The backing store for all device data - single source of truth
+    private let deviceStore: DeviceStore
+
     private var isRunning = false
 
     public typealias DeviceUpdateHandler = @Sendable (Device, UpdateType) -> Void
@@ -19,7 +22,30 @@ public actor DiscoveryManager {
         case wentOffline
     }
 
-    private init() {}
+    private init() {
+        self.deviceStore = DeviceStore()
+    }
+
+    /// Initialize with a custom DeviceStore (for testing)
+    public init(deviceStore: DeviceStore) {
+        self.deviceStore = deviceStore
+    }
+
+    /// Load persisted devices from storage
+    /// Call this on app startup to restore previous device data
+    public func loadPersistedDevices() async {
+        do {
+            try await deviceStore.load()
+            Log.info("Loaded persisted devices from storage", category: .discovery)
+        } catch {
+            Log.error("Failed to load persisted devices: \(error.localizedDescription)", category: .discovery)
+        }
+    }
+
+    /// Get the underlying device store (for direct access when needed)
+    public func getDeviceStore() -> DeviceStore {
+        deviceStore
+    }
 
     /// Configure Fingerbank API key for device identification
     public func setFingerbankAPIKey(_ key: String?) {
@@ -36,6 +62,11 @@ public actor DiscoveryManager {
         Log.info("Starting passive discovery (mDNS + SSDP)...", category: .discovery)
         isRunning = true
         onDeviceUpdate = onUpdate
+
+        // Broadcast scan started event via WebSocket
+        Task {
+            await WebSocketManager.shared.broadcastScanStarted(scanType: "passive")
+        }
 
         // Start mDNS listener
         Log.debug("Starting mDNS listener...", category: .mdns)
@@ -66,6 +97,12 @@ public actor DiscoveryManager {
         await DNSSDScanner.shared.stop()
         // Allow a brief moment for in-flight fingerprint fetches to complete
         try? await Task.sleep(for: .milliseconds(500))
+
+        // Broadcast scan completed event via WebSocket
+        let deviceCount = await deviceStore.getDeviceCount()
+        Task {
+            await WebSocketManager.shared.broadcastScanCompleted(scanType: "passive", deviceCount: deviceCount)
+        }
     }
 
     /// Clear the device update handler - call when fully done with scanning
@@ -77,41 +114,128 @@ public actor DiscoveryManager {
     public func runDNSSDDiscovery(duration: TimeInterval = 5.0, onUpdate: @escaping DeviceUpdateHandler) async {
         onDeviceUpdate = onUpdate
 
+        // Broadcast scan started via WebSocket
+        Task {
+            await WebSocketManager.shared.broadcastScanStarted(scanType: "dnssd")
+        }
+
         await DNSSDScanner.shared.browse(duration: duration) { [weak self] service in
             Task { [weak self] in
                 await self?.handleDNSSDService(service)
             }
         }
+
+        // Broadcast scan completed via WebSocket
+        let deviceCount = await deviceStore.getDeviceCount()
+        Task {
+            await WebSocketManager.shared.broadcastScanCompleted(scanType: "dnssd", deviceCount: deviceCount)
+        }
     }
 
     /// Perform active ARP scan of a subnet
-    public func scanSubnet(_ subnet: String) async throws -> [Device] {
-        let entries = try await ARPScanner.shared.scanSubnet(subnet)
+    /// - Parameters:
+    ///   - subnet: Subnet in CIDR notation (e.g., "192.168.1.0/24")
+    ///   - interface: Optional interface to scan on (e.g., "en0")
+    public func scanSubnet(_ subnet: String, interface: String? = nil) async throws -> [Device] {
+        // Broadcast scan started via WebSocket
+        Task {
+            await WebSocketManager.shared.broadcastScanStarted(scanType: "arp")
+        }
+
+        let entries = try await ARPScanner.shared.scanSubnet(subnet, interface: interface)
         var scannedDevices: [Device] = []
 
         for entry in entries {
-            let device = await updateOrCreateDevice(
+            var device = await updateOrCreateDevice(
                 mac: entry.mac,
                 ip: entry.ip,
                 source: "ARP scan"
             )
+            // Tag device with source interface and subnet
+            device.sourceInterface = entry.interface ?? interface
+            device.subnet = subnet
+            try? await deviceStore.addOrUpdate(device: device)
             scannedDevices.append(device)
+        }
+
+        // Broadcast scan completed via WebSocket
+        let deviceCount = scannedDevices.count
+        Task {
+            await WebSocketManager.shared.broadcastScanCompleted(scanType: "arp", deviceCount: deviceCount)
         }
 
         return scannedDevices
     }
 
+    /// Scan all selected network interfaces
+    /// - Parameter selectedInterfaceIds: Set of interface IDs to scan. If empty, scans all active interfaces.
+    /// - Returns: All devices discovered across all interfaces
+    public func scanAllSelectedInterfaces(selectedInterfaceIds: Set<String> = []) async throws -> [Device] {
+        let interfaces = await NetworkInterfaceManager.shared.getSelectedInterfaces(selectedIds: selectedInterfaceIds)
+
+        guard !interfaces.isEmpty else {
+            Log.warning("No active interfaces available for scanning", category: .discovery)
+            return []
+        }
+
+        Log.info("Scanning \(interfaces.count) interface(s): \(interfaces.map { $0.id }.joined(separator: ", "))", category: .discovery)
+
+        var allDevices: [Device] = []
+
+        // Scan each interface sequentially to avoid ARP table confusion
+        for interface in interfaces {
+            let subnet = interface.cidr
+            Log.info("Scanning interface \(interface.id) (\(interface.name)): \(subnet)", category: .discovery)
+
+            do {
+                let entries = try await ARPScanner.shared.scanSubnet(subnet, interface: interface.id)
+
+                for entry in entries {
+                    var device = await updateOrCreateDevice(
+                        mac: entry.mac,
+                        ip: entry.ip,
+                        source: "ARP scan (\(interface.name))"
+                    )
+                    // Tag device with source interface and subnet
+                    device.sourceInterface = interface.id
+                    device.subnet = subnet
+                    try? await deviceStore.addOrUpdate(device: device)
+                    allDevices.append(device)
+                }
+
+                Log.info("Found \(entries.count) devices on \(interface.id)", category: .discovery)
+            } catch {
+                Log.error("Failed to scan interface \(interface.id): \(error.localizedDescription)", category: .discovery)
+                // Continue with other interfaces
+            }
+        }
+
+        // Fingerprint new devices
+        if fingerbankAPIKey != nil {
+            let macs = allDevices.map { $0.mac }
+            await fingerprintARPDevices(macs)
+        }
+
+        return allDevices
+    }
+
     /// Get current ARP table without active scanning
-    public func getARPDevices() async throws -> [Device] {
-        let entries = try await ARPScanner.shared.getARPTable()
+    /// - Parameter interface: Optional interface to filter results
+    public func getARPDevices(interface: String? = nil) async throws -> [Device] {
+        let entries = try await ARPScanner.shared.getARPTable(interface: interface)
         var macAddresses: [String] = []
 
         for entry in entries {
-            let device = await updateOrCreateDevice(
+            var device = await updateOrCreateDevice(
                 mac: entry.mac,
                 ip: entry.ip,
                 source: "ARP table"
             )
+            // Tag device with source interface if available
+            if let iface = entry.interface {
+                device.sourceInterface = iface
+                try? await deviceStore.addOrUpdate(device: device)
+            }
             macAddresses.append(device.mac)
         }
 
@@ -120,16 +244,38 @@ public actor DiscoveryManager {
             await fingerprintARPDevices(macAddresses)
         }
 
-        // Return updated devices from internal storage (includes fingerprint data)
-        return macAddresses.compactMap { devices[$0] }
+        // Return updated devices from store (includes fingerprint data)
+        var result: [Device] = []
+        for mac in macAddresses {
+            if let device = await deviceStore.getDevice(mac: mac) {
+                result.append(device)
+            }
+        }
+        return result
+    }
+
+    /// Get devices by interface
+    public func getDevices(forInterface interfaceId: String) async -> [Device] {
+        await deviceStore.getDevices(matching: { $0.sourceInterface == interfaceId })
+    }
+
+    /// Get devices by subnet
+    public func getDevices(forSubnet subnet: String) async -> [Device] {
+        await deviceStore.getDevices(matching: { $0.subnet == subnet })
     }
 
     /// Fingerprint ARP devices using Fingerbank MAC lookup (no UPnP location needed)
     private func fingerprintARPDevices(_ macAddresses: [String]) async {
         // Only fingerprint devices that don't already have fingerprint data
-        let macsNeedingFingerprint = macAddresses.filter { mac in
-            guard let existingDevice = devices[mac] else { return true }
-            return existingDevice.fingerprint == nil
+        var macsNeedingFingerprint: [String] = []
+        for mac in macAddresses {
+            if let existingDevice = await deviceStore.getDevice(mac: mac) {
+                if existingDevice.fingerprint == nil {
+                    macsNeedingFingerprint.append(mac)
+                }
+            } else {
+                macsNeedingFingerprint.append(mac)
+            }
         }
 
         guard !macsNeedingFingerprint.isEmpty else { return }
@@ -144,7 +290,7 @@ public actor DiscoveryManager {
 
     /// Fingerprint a device using only Fingerbank (MAC lookup, no UPnP)
     private func fingerprintDeviceWithFingerbankOnly(mac: String) async {
-        guard var device = devices[mac] else { return }
+        guard var device = await deviceStore.getDevice(mac: mac) else { return }
 
         // Skip if already has fingerprint
         guard device.fingerprint == nil else { return }
@@ -170,24 +316,31 @@ public actor DiscoveryManager {
                 device.deviceType = inferredType
             }
 
-            devices[mac] = device
+            try? await deviceStore.addOrUpdate(device: device)
             onDeviceUpdate?(device, .updated)
+
+            // Broadcast device updated via WebSocket
+            let deviceToSend = device
+            Task {
+                await WebSocketManager.shared.broadcastDeviceUpdated(deviceToSend)
+            }
         }
     }
 
     /// Get all known devices
-    public func getAllDevices() -> [Device] {
-        Array(devices.values).sorted { $0.lastSeen > $1.lastSeen }
+    public func getAllDevices() async -> [Device] {
+        await deviceStore.getDevices()
     }
 
     /// Get only devices classified as smart
-    public func getSmartDevices(minScore: Int = 20) -> [Device] {
-        devices.values.filter { $0.smartScore >= minScore }.sorted { $0.smartScore > $1.smartScore }
+    public func getSmartDevices(minScore: Int = 20) async -> [Device] {
+        await deviceStore.getDevices(matching: { $0.smartScore >= minScore })
+            .sorted { $0.smartScore > $1.smartScore }
     }
 
     /// Get device by MAC
-    public func getDevice(mac: String) -> Device? {
-        devices[mac.uppercased()]
+    public func getDevice(mac: String) async -> Device? {
+        await deviceStore.getDevice(mac: mac)
     }
 
     /// Check if passive discovery is currently running
@@ -196,13 +349,13 @@ public actor DiscoveryManager {
     }
 
     /// Get total device count
-    public func getDeviceCount() -> Int {
-        devices.count
+    public func getDeviceCount() async -> Int {
+        await deviceStore.getDeviceCount()
     }
 
     /// Scan ports for a specific device
     public func scanPorts(for mac: String, ports: [UInt16]? = nil) async -> Device? {
-        guard var device = devices[mac.uppercased()] else { return nil }
+        guard var device = await deviceStore.getDevice(mac: mac.uppercased()) else { return nil }
 
         let result = await PortScanner.shared.scan(ip: device.ip, ports: ports)
 
@@ -278,15 +431,26 @@ public actor DiscoveryManager {
         // Recalculate smart score
         device.smartScore = calculateSmartScore(for: device)
 
-        devices[device.mac] = device
+        try? await deviceStore.addOrUpdate(device: device)
         onDeviceUpdate?(device, .updated)
+
+        // Broadcast device updated via WebSocket
+        let deviceToSend = device
+        Task {
+            await WebSocketManager.shared.broadcastDeviceUpdated(deviceToSend)
+        }
 
         return device
     }
 
     /// Quick port scan all known devices
     public func quickScanAllDevices() async {
-        let deviceList = Array(devices.values)
+        let deviceList = await deviceStore.getDevices()
+
+        // Broadcast scan started via WebSocket
+        Task {
+            await WebSocketManager.shared.broadcastScanStarted(scanType: "quickPorts")
+        }
 
         await withTaskGroup(of: Void.self) { group in
             for device in deviceList {
@@ -295,11 +459,22 @@ public actor DiscoveryManager {
                 }
             }
         }
+
+        // Broadcast scan completed via WebSocket
+        let deviceCount = await deviceStore.getDeviceCount()
+        Task {
+            await WebSocketManager.shared.broadcastScanCompleted(scanType: "quickPorts", deviceCount: deviceCount)
+        }
     }
 
     /// Full port scan all known devices
     public func fullScanAllDevices() async {
-        let deviceList = Array(devices.values)
+        let deviceList = await deviceStore.getDevices()
+
+        // Broadcast scan started via WebSocket
+        Task {
+            await WebSocketManager.shared.broadcastScanStarted(scanType: "fullPorts")
+        }
 
         await withTaskGroup(of: Void.self) { group in
             for device in deviceList {
@@ -307,6 +482,12 @@ public actor DiscoveryManager {
                     _ = await self.scanPorts(for: device.mac)
                 }
             }
+        }
+
+        // Broadcast scan completed via WebSocket
+        let deviceCount = await deviceStore.getDeviceCount()
+        Task {
+            await WebSocketManager.shared.broadcastScanCompleted(scanType: "fullPorts", deviceCount: deviceCount)
         }
     }
 
@@ -379,8 +560,14 @@ public actor DiscoveryManager {
                 // Recalculate smart score
                 device.smartScore = calculateSmartScore(for: device)
 
-                devices[device.mac] = device
+                try? await deviceStore.addOrUpdate(device: device)
                 onDeviceUpdate?(device, .updated)
+
+                // Broadcast device updated via WebSocket
+                let deviceToSend = device
+                Task {
+                    await WebSocketManager.shared.broadcastDeviceUpdated(deviceToSend)
+                }
             }
         }
     }
@@ -462,8 +649,14 @@ public actor DiscoveryManager {
 
                 Log.info("DNS-SD: Final device - MAC=\(device.mac) hostname=\(device.hostname ?? "nil") type=\(device.deviceType.rawValue)", category: .discovery)
 
-                devices[device.mac] = device
+                try? await deviceStore.addOrUpdate(device: device)
                 onDeviceUpdate?(device, .updated)
+
+                // Broadcast device updated via WebSocket
+                let deviceToSend = device
+                Task {
+                    await WebSocketManager.shared.broadcastDeviceUpdated(deviceToSend)
+                }
             } else {
                 Log.debug("DNS-SD: No ARP entry found for IP \(ip)", category: .discovery)
             }
@@ -533,9 +726,15 @@ public actor DiscoveryManager {
 
                 Log.info("SSDP: Final device - MAC=\(device.mac) hostname=\(device.hostname ?? "nil") type=\(device.deviceType.rawValue) score=\(device.smartScore)", category: .ssdp)
 
-                devices[device.mac] = device
+                try? await deviceStore.addOrUpdate(device: device)
                 onDeviceUpdate?(device, .updated)
                 Log.debug("SSDP: Called onDeviceUpdate for \(device.mac)", category: .ssdp)
+
+                // Broadcast device updated via WebSocket
+                let deviceToSend = device
+                Task {
+                    await WebSocketManager.shared.broadcastDeviceUpdated(deviceToSend)
+                }
 
                 // Trigger UPnP fingerprinting asynchronously
                 let macAddress = device.mac
@@ -556,8 +755,8 @@ public actor DiscoveryManager {
 
     /// Fetch fingerprint for a device (UPnP + Fingerbank if API key available)
     private func fetchUPnPFingerprint(mac: String, locationURL: String) async {
-        guard var device = devices[mac] else {
-            Log.debug("Fingerprint: Device \(mac) not found in devices list", category: .fingerprinting)
+        guard var device = await deviceStore.getDevice(mac: mac) else {
+            Log.debug("Fingerprint: Device \(mac) not found in device store", category: .fingerprinting)
             return
         }
 
@@ -598,8 +797,14 @@ public actor DiscoveryManager {
                 device.hostname = friendlyName
             }
 
-            devices[mac] = device
+            try? await deviceStore.addOrUpdate(device: device)
             onDeviceUpdate?(device, .updated)
+
+            // Broadcast device updated via WebSocket
+            let deviceToSend = device
+            Task {
+                await WebSocketManager.shared.broadcastDeviceUpdated(deviceToSend)
+            }
         } else {
             Log.warning("Fingerprint: FAILED for \(mac) - no data returned", category: .fingerprinting)
         }
@@ -693,7 +898,7 @@ public actor DiscoveryManager {
     private func updateOrCreateDevice(mac: String, ip: String, source: String, services: [String] = []) async -> Device {
         let normalizedMAC = mac.uppercased()
 
-        if var existing = devices[normalizedMAC] {
+        if var existing = await deviceStore.getDevice(mac: normalizedMAC) {
             existing.ip = ip
             existing.lastSeen = Date()
             existing.isOnline = true
@@ -719,7 +924,7 @@ public actor DiscoveryManager {
                 Log.debug("Updated behavior profile for \(normalizedMAC): classification=\(profile.classification.rawValue)", category: .behavior)
             }
 
-            devices[normalizedMAC] = existing
+            // Note: Caller is responsible for calling deviceStore.addOrUpdate after modifying
             return existing
         } else {
             // Look up vendor from MAC
@@ -761,8 +966,15 @@ public actor DiscoveryManager {
                 Log.debug("Initialized behavior profile for \(normalizedMAC)", category: .behavior)
             }
 
-            devices[normalizedMAC] = device
+            // Save to store - this is a new device
+            try? await deviceStore.addOrUpdate(device: device)
             onDeviceUpdate?(device, .discovered)
+
+            // Broadcast device discovered via WebSocket
+            let deviceToSend = device
+            Task {
+                await WebSocketManager.shared.broadcastDeviceDiscovered(deviceToSend)
+            }
             return device
         }
     }

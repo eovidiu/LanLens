@@ -22,6 +22,8 @@ public enum LogCategory: String, CaseIterable, Sendable {
     case macAnalysis = "MACAnalysis"
     case security = "Security"
     case behavior = "Behavior"
+    case export = "Export"
+    case websocket = "WebSocket"
 }
 
 // MARK: - File Log Configuration

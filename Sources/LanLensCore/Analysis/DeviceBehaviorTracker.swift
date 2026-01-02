@@ -4,6 +4,12 @@ import CryptoKit
 /// Tracks device behavior patterns over time to classify devices by their network presence.
 /// Uses accumulated presence observations to determine if a device is infrastructure (always-on),
 /// a workstation (daily pattern), portable (intermittent), or a mobile/guest device.
+///
+/// Persistence Strategy:
+/// - Presence records are stored in the database (presence_records table)
+/// - In-memory profile cache is maintained for performance
+/// - Profiles are rebuilt from database records on demand
+/// - Legacy JSON file is migrated on first load, then removed
 public actor DeviceBehaviorTracker {
 
     // MARK: - Singleton
@@ -11,22 +17,34 @@ public actor DeviceBehaviorTracker {
     public static let shared = DeviceBehaviorTracker()
 
     private init() {
-        loadProfiles()
+        self.presenceRepository = PresenceRepository()
+        Task {
+            await migrateFromJsonIfNeeded()
+            await loadProfilesFromDatabase()
+        }
+    }
+    
+    /// Initialize with a custom repository (for testing)
+    public init(presenceRepository: PresenceRepositoryProtocol) {
+        self.presenceRepository = presenceRepository
     }
 
     // MARK: - Configuration
 
-    /// Maximum number of presence records to retain per device
-    private static let maxPresenceRecords = 100
+    /// Maximum number of presence records to retain per device in memory cache
+    private static let maxPresenceRecordsInMemory = 100
 
     /// Minimum observations required before classification is considered reliable
     private static let minObservationsForClassification = 10
 
-    /// Maximum number of device profiles to retain (LRU eviction when exceeded)
-    private static let maxProfiles = 1000
+    /// Maximum number of device profiles to retain in memory (LRU eviction when exceeded)
+    private static let maxProfilesInMemory = 1000
 
-    /// Number of updates between automatic persistence
+    /// Number of updates between automatic database writes
     private static let persistenceInterval = 10
+    
+    /// Default retention period for presence records (30 days)
+    private static let defaultRetentionDays = 30
 
     /// When enabled, MAC addresses are hashed with SHA256 before storing
     public var hashDeviceIds: Bool = false
@@ -55,17 +73,26 @@ public actor DeviceBehaviorTracker {
     
     // MARK: - Storage
 
-    /// Device behavior profiles keyed by device identifier (typically MAC address or hashed ID)
-    private var profiles: [String: DeviceBehaviorProfile] = [:]
+    /// Presence record repository for database persistence
+    private let presenceRepository: PresenceRepositoryProtocol
 
-    /// Tracks last access time for each profile for LRU eviction
+    /// In-memory cache of device behavior profiles (keyed by normalized MAC)
+    private var profileCache: [String: DeviceBehaviorProfile] = [:]
+
+    /// Tracks last access time for each cached profile for LRU eviction
     private var lastAccessTime: [String: Date] = [:]
 
     /// Counter for triggering periodic persistence
     private var updatesSinceLastPersist: Int = 0
+    
+    /// Batch of pending presence records to write
+    private var pendingRecords: [(mac: String, isOnline: Bool, ip: String?, services: [String], timestamp: Date)] = []
 
-    /// Salt for hashing device IDs (persisted with profiles)
+    /// Salt for hashing device IDs
     private var hashSalt: String = ""
+    
+    /// Whether initial load from database has completed
+    private var isLoaded: Bool = false
     
     // MARK: - Public Methods
     
@@ -80,7 +107,7 @@ public actor DeviceBehaviorTracker {
         isPresent: Bool,
         services: [String] = [],
         ipAddress: String? = nil
-    ) {
+    ) async {
         let storageId = normalizeDeviceId(deviceId)
         let now = Date()
 
@@ -92,8 +119,8 @@ public actor DeviceBehaviorTracker {
             ipAddress: ipAddress
         )
 
-        // Get or create profile
-        var profile = profiles[storageId] ?? DeviceBehaviorProfile(
+        // Get or create profile in cache
+        var profile = profileCache[storageId] ?? DeviceBehaviorProfile(
             firstObserved: now,
             lastObserved: now
         )
@@ -102,12 +129,12 @@ public actor DeviceBehaviorTracker {
         profile.lastObserved = now
         profile.observationCount += 1
 
-        // Add record to history
+        // Add record to in-memory history
         profile.presenceHistory.append(record)
 
-        // Trim history if needed
-        if profile.presenceHistory.count > Self.maxPresenceRecords {
-            let overflow = profile.presenceHistory.count - Self.maxPresenceRecords
+        // Trim in-memory history if needed
+        if profile.presenceHistory.count > Self.maxPresenceRecordsInMemory {
+            let overflow = profile.presenceHistory.count - Self.maxPresenceRecordsInMemory
             profile.presenceHistory.removeFirst(overflow)
         }
 
@@ -120,17 +147,20 @@ public actor DeviceBehaviorTracker {
             )
         }
 
-        // Store updated profile and access time
-        profiles[storageId] = profile
+        // Store updated profile and access time in cache
+        profileCache[storageId] = profile
         lastAccessTime[storageId] = now
 
-        // Enforce LRU eviction if we exceed max profiles
+        // Queue for database persistence
+        pendingRecords.append((mac: storageId, isOnline: isPresent, ip: ipAddress, services: services, timestamp: now))
+
+        // Enforce LRU eviction if we exceed max profiles in memory
         evictLeastRecentlyUsedIfNeeded()
 
-        // Periodic persistence
+        // Periodic persistence to database
         updatesSinceLastPersist += 1
         if updatesSinceLastPersist >= Self.persistenceInterval {
-            persistProfiles()
+            await flushPendingRecords()
             updatesSinceLastPersist = 0
         }
 
@@ -140,12 +170,28 @@ public actor DeviceBehaviorTracker {
     /// Get the current behavior profile for a device.
     /// - Parameter deviceId: Unique device identifier
     /// - Returns: The device's behavior profile, or nil if no observations exist
-    public func getProfile(for deviceId: String) -> DeviceBehaviorProfile? {
+    public func getProfile(for deviceId: String) async -> DeviceBehaviorProfile? {
         let storageId = normalizeDeviceId(deviceId)
-        if profiles[storageId] != nil {
+        
+        // Check cache first
+        if let cached = profileCache[storageId] {
             lastAccessTime[storageId] = Date()
+            return cached
         }
-        return profiles[storageId]
+        
+        // Try to load from database
+        do {
+            let history = try await presenceRepository.fetchHistory(mac: storageId, since: nil)
+            guard !history.isEmpty else { return nil }
+            
+            let profile = buildProfile(from: history)
+            profileCache[storageId] = profile
+            lastAccessTime[storageId] = Date()
+            return profile
+        } catch {
+            Log.error("Failed to fetch profile from database for \(storageId): \(error)", category: .behavior)
+            return nil
+        }
     }
     
     /// Update and return the behavior classification for a device.
@@ -153,10 +199,10 @@ public actor DeviceBehaviorTracker {
     /// - Parameter deviceId: Unique device identifier
     /// - Returns: The updated behavior classification
     @discardableResult
-    public func updateClassification(for deviceId: String) -> BehaviorClassification {
+    public func updateClassification(for deviceId: String) async -> BehaviorClassification {
         let storageId = normalizeDeviceId(deviceId)
 
-        guard var profile = profiles[storageId] else {
+        guard var profile = await getProfile(for: deviceId) else {
             Log.debug("No profile found for \(storageId), returning unknown classification", category: .behavior)
             return .unknown
         }
@@ -187,8 +233,8 @@ public actor DeviceBehaviorTracker {
         profile.isAlwaysOn = classification == .infrastructure || classification == .server || classification == .iot
         profile.isIntermittent = classification == .portable || classification == .mobile || classification == .guest
 
-        // Store updated profile
-        profiles[storageId] = profile
+        // Store updated profile in cache
+        profileCache[storageId] = profile
 
         Log.info("Updated classification for \(storageId): \(classification.rawValue) (uptime: \(String(format: "%.1f", uptimePercent))%, observations: \(profile.observationCount))", category: .behavior)
 
@@ -210,7 +256,6 @@ public actor DeviceBehaviorTracker {
         // Generate signals based on behavior classification
         switch profile.classification {
         case .infrastructure:
-            // Infrastructure devices are likely routers, access points, or hubs
             signals.append(DeviceTypeInferenceEngine.Signal(
                 source: .behavior,
                 suggestedType: .router,
@@ -219,7 +264,6 @@ public actor DeviceBehaviorTracker {
             Log.debug("Generated router signal (0.40) for infrastructure classification", category: .behavior)
             
         case .server:
-            // Server devices are likely NAS or computers running server software
             signals.append(DeviceTypeInferenceEngine.Signal(
                 source: .behavior,
                 suggestedType: .nas,
@@ -228,8 +272,6 @@ public actor DeviceBehaviorTracker {
             Log.debug("Generated NAS signal (0.35) for server classification", category: .behavior)
             
         case .iot:
-            // IoT devices could be various smart home devices
-            // Check peak hours to refine the guess
             if isEveningPeak(profile.peakHours) {
                 signals.append(DeviceTypeInferenceEngine.Signal(
                     source: .behavior,
@@ -247,7 +289,6 @@ public actor DeviceBehaviorTracker {
             }
             
         case .workstation:
-            // Workstations with daily patterns are likely computers
             if isBusinessHoursPeak(profile.peakHours) {
                 signals.append(DeviceTypeInferenceEngine.Signal(
                     source: .behavior,
@@ -256,7 +297,6 @@ public actor DeviceBehaviorTracker {
                 ))
                 Log.debug("Generated computer signal (0.35) for workstation with business hours", category: .behavior)
             } else if isEveningPeak(profile.peakHours) {
-                // Evening usage could be entertainment device
                 signals.append(DeviceTypeInferenceEngine.Signal(
                     source: .behavior,
                     suggestedType: .smartTV,
@@ -273,7 +313,6 @@ public actor DeviceBehaviorTracker {
             }
             
         case .portable:
-            // Portable devices are laptops or tablets
             signals.append(DeviceTypeInferenceEngine.Signal(
                 source: .behavior,
                 suggestedType: .computer,
@@ -282,7 +321,6 @@ public actor DeviceBehaviorTracker {
             Log.debug("Generated computer signal (0.30) for portable classification", category: .behavior)
             
         case .mobile:
-            // Mobile devices are phones or tablets
             signals.append(DeviceTypeInferenceEngine.Signal(
                 source: .behavior,
                 suggestedType: .phone,
@@ -291,7 +329,6 @@ public actor DeviceBehaviorTracker {
             Log.debug("Generated phone signal (0.30) for mobile classification", category: .behavior)
             
         case .guest:
-            // Guest devices could be phones or laptops
             signals.append(DeviceTypeInferenceEngine.Signal(
                 source: .behavior,
                 suggestedType: .phone,
@@ -300,7 +337,6 @@ public actor DeviceBehaviorTracker {
             Log.debug("Generated phone signal (0.25) for guest classification", category: .behavior)
             
         case .unknown:
-            // No signals for unknown classification
             Log.debug("No signals generated for unknown classification", category: .behavior)
         }
         
@@ -310,44 +346,161 @@ public actor DeviceBehaviorTracker {
     /// Generate signals directly from a device ID, updating classification first.
     /// - Parameter deviceId: Unique device identifier
     /// - Returns: Array of signals for the DeviceTypeInferenceEngine
-    public func generateSignals(for deviceId: String) -> [DeviceTypeInferenceEngine.Signal] {
+    public func generateSignals(for deviceId: String) async -> [DeviceTypeInferenceEngine.Signal] {
         let storageId = normalizeDeviceId(deviceId)
 
         // Update classification first (also updates access time)
-        updateClassification(for: deviceId)
+        await updateClassification(for: deviceId)
 
         // Get updated profile and generate signals
-        guard let profile = profiles[storageId] else {
+        guard let profile = profileCache[storageId] else {
             return []
         }
 
         return generateSignals(from: profile)
     }
     
-    /// Clear all stored behavior profiles.
-    /// Useful for testing or resetting the tracker.
-    public func clearAllProfiles() {
-        profiles.removeAll()
+    /// Clear all stored behavior profiles from memory and database.
+    public func clearAllProfiles() async {
+        profileCache.removeAll()
         lastAccessTime.removeAll()
-        persistProfiles()
-        Log.info("Cleared all behavior profiles", category: .behavior)
+        pendingRecords.removeAll()
+        
+        // Note: This does not delete records from database
+        // Use pruneOldRecords to manage database records
+        
+        Log.info("Cleared all in-memory behavior profiles", category: .behavior)
     }
 
     /// Remove the behavior profile for a specific device.
     /// - Parameter deviceId: Unique device identifier
-    public func removeProfile(for deviceId: String) {
+    public func removeProfile(for deviceId: String) async {
         let storageId = normalizeDeviceId(deviceId)
-        profiles.removeValue(forKey: storageId)
+        profileCache.removeValue(forKey: storageId)
         lastAccessTime.removeValue(forKey: storageId)
-        Log.debug("Removed behavior profile for \(storageId)", category: .behavior)
+        
+        // Remove from database
+        do {
+            try await presenceRepository.deleteRecords(mac: storageId)
+            Log.debug("Removed behavior profile and records for \(storageId)", category: .behavior)
+        } catch {
+            Log.error("Failed to delete database records for \(storageId): \(error)", category: .behavior)
+        }
     }
     
-    /// Get the total number of tracked devices.
+    /// Get the total number of tracked devices in memory cache.
     public var trackedDeviceCount: Int {
-        profiles.count
+        profileCache.count
+    }
+    
+    /// Flush any pending presence records to the database.
+    public func flushPendingRecords() async {
+        guard !pendingRecords.isEmpty else { return }
+        
+        let recordsToWrite = pendingRecords
+        pendingRecords.removeAll()
+        
+        do {
+            try await presenceRepository.recordPresenceBatch(recordsToWrite)
+            Log.debug("Flushed \(recordsToWrite.count) presence records to database", category: .behavior)
+        } catch {
+            Log.error("Failed to flush presence records to database: \(error)", category: .behavior)
+            // Re-queue failed records
+            pendingRecords.append(contentsOf: recordsToWrite)
+        }
+    }
+    
+    /// Prune old presence records from the database.
+    /// - Parameter days: Number of days of history to retain (default: 30)
+    /// - Returns: Number of records pruned
+    @discardableResult
+    public func pruneOldRecords(retentionDays: Int = 30) async -> Int {
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -retentionDays, to: Date()) ?? Date()
+        
+        do {
+            let pruned = try await presenceRepository.pruneOldRecords(olderThan: cutoffDate)
+            Log.info("Pruned \(pruned) presence records older than \(retentionDays) days", category: .behavior)
+            return pruned
+        } catch {
+            Log.error("Failed to prune old presence records: \(error)", category: .behavior)
+            return 0
+        }
+    }
+    
+    /// Get presence history for a device from the database.
+    /// - Parameters:
+    ///   - deviceId: Device identifier
+    ///   - since: Optional date to filter history (nil for all history)
+    /// - Returns: Array of presence records
+    public func getPresenceHistory(for deviceId: String, since: Date? = nil) async -> [PresenceRecord] {
+        let storageId = normalizeDeviceId(deviceId)
+        
+        do {
+            return try await presenceRepository.fetchHistory(mac: storageId, since: since)
+        } catch {
+            Log.error("Failed to fetch presence history for \(storageId): \(error)", category: .behavior)
+            return []
+        }
+    }
+    
+    /// Get uptime statistics for a device from the database.
+    /// - Parameters:
+    ///   - deviceId: Device identifier
+    ///   - since: Optional date to calculate stats from (nil for all time)
+    /// - Returns: Uptime statistics
+    public func getUptimeStats(for deviceId: String, since: Date? = nil) async -> UptimeStats {
+        let storageId = normalizeDeviceId(deviceId)
+        
+        do {
+            return try await presenceRepository.calculateUptimeStats(mac: storageId, since: since)
+        } catch {
+            Log.error("Failed to calculate uptime stats for \(storageId): \(error)", category: .behavior)
+            return UptimeStats()
+        }
+    }
+    
+    /// Get all devices seen in a time range.
+    /// - Parameters:
+    ///   - start: Start date
+    ///   - end: End date
+    /// - Returns: Array of MAC addresses
+    public func getDevicesSeenBetween(start: Date, end: Date) async -> [String] {
+        do {
+            return try await presenceRepository.fetchDevicesSeenBetween(start: start, end: end)
+        } catch {
+            Log.error("Failed to fetch devices seen between dates: \(error)", category: .behavior)
+            return []
+        }
     }
     
     // MARK: - Private Helpers
+    
+    /// Build a behavior profile from presence history records.
+    private func buildProfile(from history: [PresenceRecord]) -> DeviceBehaviorProfile {
+        guard let firstRecord = history.min(by: { $0.timestamp < $1.timestamp }),
+              let lastRecord = history.max(by: { $0.timestamp < $1.timestamp }) else {
+            return DeviceBehaviorProfile()
+        }
+        
+        // Take most recent records for in-memory cache
+        let recentHistory = Array(history.suffix(Self.maxPresenceRecordsInMemory))
+        
+        let profile = DeviceBehaviorProfile(
+            classification: .unknown,
+            presenceHistory: recentHistory,
+            averageUptimePercent: 0,
+            isAlwaysOn: false,
+            isIntermittent: false,
+            hasDailyPattern: false,
+            peakHours: [],
+            consistentServices: [],
+            firstObserved: firstRecord.timestamp,
+            lastObserved: lastRecord.timestamp,
+            observationCount: history.count
+        )
+        
+        return profile
+    }
     
     /// Calculate the uptime percentage from presence history.
     private func calculateUptimePercent(from history: [PresenceRecord]) -> Double {
@@ -361,7 +514,6 @@ public actor DeviceBehaviorTracker {
     private func calculatePeakHours(from history: [PresenceRecord]) -> [Int] {
         guard !history.isEmpty else { return [] }
         
-        // Count online occurrences per hour
         var hourCounts: [Int: Int] = [:]
         let calendar = Calendar.current
         
@@ -372,11 +524,9 @@ public actor DeviceBehaviorTracker {
         
         guard !hourCounts.isEmpty else { return [] }
         
-        // Find the maximum count
         let maxCount = hourCounts.values.max() ?? 0
         guard maxCount > 0 else { return [] }
         
-        // Include hours that have at least 50% of max activity
         let threshold = maxCount / 2
         let peakHours = hourCounts
             .filter { $0.value >= threshold }
@@ -388,13 +538,10 @@ public actor DeviceBehaviorTracker {
     
     /// Detect if the device has a daily usage pattern.
     private func detectDailyPattern(from history: [PresenceRecord], peakHours: [Int]) -> Bool {
-        // Need at least some peak hours to have a pattern
         guard peakHours.count >= 2 && peakHours.count <= 16 else {
             return false
         }
         
-        // Check if peak hours form a contiguous block (or two blocks)
-        // This indicates a daily pattern vs random access
         var gaps = 0
         for i in 1..<peakHours.count {
             let diff = peakHours[i] - peakHours[i-1]
@@ -403,7 +550,6 @@ public actor DeviceBehaviorTracker {
             }
         }
         
-        // Allow up to 2 gaps (e.g., morning + evening usage)
         return gaps <= 2
     }
     
@@ -414,30 +560,21 @@ public actor DeviceBehaviorTracker {
         observationCount: Int,
         peakHours: [Int]
     ) -> BehaviorClassification {
-        // Need minimum observations for reliable classification
         guard observationCount >= Self.minObservationsForClassification else {
             return .unknown
         }
         
-        // Classify by uptime thresholds
         if uptimePercent >= UptimeThreshold.infrastructure {
-            // Very high uptime - infrastructure or server
-            // Differentiate based on services (if available) or default to infrastructure
             return .infrastructure
         } else if uptimePercent >= UptimeThreshold.iot {
-            // High uptime but not quite infrastructure
             return hasDailyPattern ? .server : .iot
         } else if uptimePercent >= UptimeThreshold.workstation {
-            // Medium uptime with potential patterns
             return hasDailyPattern ? .workstation : .portable
         } else if uptimePercent >= UptimeThreshold.portable {
-            // Lower uptime
             return hasDailyPattern ? .portable : .mobile
         } else if uptimePercent >= UptimeThreshold.mobile {
-            // Very low uptime
             return .mobile
         } else {
-            // Barely seen
             return .guest
         }
     }
@@ -448,7 +585,6 @@ public actor DeviceBehaviorTracker {
         newServices: [String],
         history: [PresenceRecord]
     ) -> [String] {
-        // Count service occurrences across online records
         var serviceCounts: [String: Int] = [:]
         let onlineRecords = history.filter { $0.isOnline }
         
@@ -458,7 +594,6 @@ public actor DeviceBehaviorTracker {
             }
         }
         
-        // Include services present in at least 80% of online observations
         let threshold = max(1, (onlineRecords.count * 80) / 100)
         let consistent = serviceCounts
             .filter { $0.value >= threshold }
@@ -476,7 +611,6 @@ public actor DeviceBehaviorTracker {
         let peakSet = Set(peakHours)
         let businessPeakCount = peakSet.intersection(businessHours).count
         
-        // More than half of peak hours are business hours
         return businessPeakCount > peakHours.count / 2
     }
     
@@ -488,15 +622,12 @@ public actor DeviceBehaviorTracker {
         let peakSet = Set(peakHours)
         let eveningPeakCount = peakSet.intersection(eveningHours).count
 
-        // More than half of peak hours are evening hours
         return eveningPeakCount > peakHours.count / 2
     }
 
     // MARK: - Device ID Normalization and Hashing
 
     /// Normalize and optionally hash a device ID for storage.
-    /// - Parameter deviceId: Raw device identifier (typically MAC address)
-    /// - Returns: Normalized (uppercased) or hashed identifier for storage
     private func normalizeDeviceId(_ deviceId: String) -> String {
         let normalized = deviceId.uppercased()
 
@@ -504,7 +635,10 @@ public actor DeviceBehaviorTracker {
             return normalized
         }
 
-        // Hash with salt for privacy
+        if hashSalt.isEmpty {
+            hashSalt = generateSalt()
+        }
+
         let saltedId = hashSalt + normalized
         let hash = SHA256.hash(data: Data(saltedId.utf8))
         return hash.map { String(format: "%02x", $0) }.joined()
@@ -520,123 +654,111 @@ public actor DeviceBehaviorTracker {
 
     /// Evict least recently used profiles if we exceed the maximum.
     private func evictLeastRecentlyUsedIfNeeded() {
-        guard profiles.count > Self.maxProfiles else { return }
+        guard profileCache.count > Self.maxProfilesInMemory else { return }
 
-        let countToEvict = profiles.count - Self.maxProfiles
+        let countToEvict = profileCache.count - Self.maxProfilesInMemory
 
-        // Sort by last access time (oldest first)
         let sortedByAccess = lastAccessTime.sorted { $0.value < $1.value }
 
-        // Evict the oldest entries
         for (deviceId, _) in sortedByAccess.prefix(countToEvict) {
-            profiles.removeValue(forKey: deviceId)
+            profileCache.removeValue(forKey: deviceId)
             lastAccessTime.removeValue(forKey: deviceId)
-            Log.debug("Evicted LRU profile: \(deviceId)", category: .behavior)
+            Log.debug("Evicted LRU profile from cache: \(deviceId)", category: .behavior)
         }
 
-        Log.info("Evicted \(countToEvict) profiles due to LRU limit", category: .behavior)
+        Log.info("Evicted \(countToEvict) profiles from cache due to LRU limit", category: .behavior)
     }
 
-    // MARK: - Persistence
-
-    /// Get the URL for the profiles storage file.
-    private func profilesFileURL() -> URL? {
-        guard let appSupportURL = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            Log.error("Could not find Application Support directory", category: .behavior)
-            return nil
-        }
-
-        let lanLensDir = appSupportURL.appendingPathComponent("LanLens", isDirectory: true)
-
-        // Create directory if needed
+    // MARK: - Database Loading
+    
+    /// Load known device profiles from the database into cache.
+    private func loadProfilesFromDatabase() async {
+        guard !isLoaded else { return }
+        
+        // Load a sampling of recent devices to warm the cache
+        let recentDate = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        
         do {
-            try FileManager.default.createDirectory(
-                at: lanLensDir,
-                withIntermediateDirectories: true,
-                attributes: nil
-            )
+            let recentDevices = try await presenceRepository.fetchDevicesSeenBetween(start: recentDate, end: Date())
+            
+            for mac in recentDevices.prefix(Self.maxProfilesInMemory) {
+                let history = try await presenceRepository.fetchHistory(mac: mac, since: recentDate)
+                if !history.isEmpty {
+                    let profile = buildProfile(from: history)
+                    profileCache[mac] = profile
+                    lastAccessTime[mac] = Date()
+                }
+            }
+            
+            isLoaded = true
+            Log.info("Loaded \(profileCache.count) behavior profiles from database", category: .behavior)
         } catch {
-            Log.error("Failed to create LanLens directory: \(error.localizedDescription)", category: .behavior)
-            return nil
-        }
-
-        return lanLensDir.appendingPathComponent("behavior_profiles.json")
-    }
-
-    /// Persist profiles to disk.
-    public func persistProfiles() {
-        guard let fileURL = profilesFileURL() else {
-            Log.warning("Cannot persist profiles: no valid file URL", category: .behavior)
-            return
-        }
-
-        let persistedData = PersistedBehaviorData(
-            profiles: profiles,
-            lastAccessTime: lastAccessTime,
-            hashSalt: hashSalt,
-            hashDeviceIds: hashDeviceIds
-        )
-
-        do {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(persistedData)
-            try data.write(to: fileURL, options: .atomic)
-            Log.debug("Persisted \(profiles.count) behavior profiles to disk", category: .behavior)
-        } catch {
-            Log.error("Failed to persist profiles: \(error.localizedDescription)", category: .behavior)
+            Log.error("Failed to load profiles from database: \(error)", category: .behavior)
+            isLoaded = true
         }
     }
-
-    /// Load profiles from disk.
-    private func loadProfiles() {
-        guard let fileURL = profilesFileURL() else {
-            Log.debug("Cannot load profiles: no valid file URL", category: .behavior)
-            initializeSaltIfNeeded()
-            return
-        }
-
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            Log.debug("No persisted profiles file found, starting fresh", category: .behavior)
-            initializeSaltIfNeeded()
-            return
-        }
-
+    
+    // MARK: - Legacy JSON Migration
+    
+    /// Migrate data from legacy JSON file to database if it exists.
+    private func migrateFromJsonIfNeeded() async {
+        guard let fileURL = legacyProfilesFileURL() else { return }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        
+        Log.info("Found legacy behavior_profiles.json, migrating to database...", category: .behavior)
+        
         do {
             let data = try Data(contentsOf: fileURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            let persistedData = try decoder.decode(PersistedBehaviorData.self, from: data)
-
-            profiles = persistedData.profiles
-            lastAccessTime = persistedData.lastAccessTime
+            let persistedData = try decoder.decode(LegacyPersistedBehaviorData.self, from: data)
+            
+            // Migrate each profile's presence history to database
+            var migratedCount = 0
+            for (mac, profile) in persistedData.profiles {
+                for record in profile.presenceHistory {
+                    try await presenceRepository.recordPresence(
+                        mac: mac,
+                        isOnline: record.isOnline,
+                        ip: record.ipAddress,
+                        services: record.availableServices,
+                        timestamp: record.timestamp
+                    )
+                }
+                migratedCount += 1
+            }
+            
+            // Preserve hash settings
             hashSalt = persistedData.hashSalt
             hashDeviceIds = persistedData.hashDeviceIds
-
-            Log.info("Loaded \(profiles.count) behavior profiles from disk", category: .behavior)
+            
+            // Remove legacy file after successful migration
+            try FileManager.default.removeItem(at: fileURL)
+            
+            Log.info("Migrated \(migratedCount) behavior profiles from JSON to database, removed legacy file", category: .behavior)
         } catch {
-            Log.error("Failed to load profiles: \(error.localizedDescription)", category: .behavior)
-            initializeSaltIfNeeded()
+            Log.error("Failed to migrate legacy behavior profiles: \(error)", category: .behavior)
         }
     }
-
-    /// Initialize the hash salt if not already set.
-    private func initializeSaltIfNeeded() {
-        if hashSalt.isEmpty {
-            hashSalt = generateSalt()
-            Log.debug("Generated new hash salt for device ID hashing", category: .behavior)
+    
+    /// Get the URL for the legacy profiles storage file.
+    private func legacyProfilesFileURL() -> URL? {
+        guard let appSupportURL = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            return nil
         }
+
+        let lanLensDir = appSupportURL.appendingPathComponent("LanLens", isDirectory: true)
+        return lanLensDir.appendingPathComponent("behavior_profiles.json")
     }
 }
 
-// MARK: - Persistence Data Structure
+// MARK: - Legacy Persistence Data Structure
 
-/// Data structure for persisting behavior profiles to disk.
-private struct PersistedBehaviorData: Codable {
+/// Data structure for reading legacy JSON profiles (for migration only).
+private struct LegacyPersistedBehaviorData: Codable {
     let profiles: [String: DeviceBehaviorProfile]
     let lastAccessTime: [String: Date]
     let hashSalt: String

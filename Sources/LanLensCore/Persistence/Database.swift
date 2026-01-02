@@ -124,13 +124,52 @@ public final class DatabaseManager: DatabaseProtocol, @unchecked Sendable {
                 t.column("smartSignals", .text).notNull().defaults(to: "[]")
                 t.column("fingerprint", .text)
             }
-            
+
             // Create indexes for common queries
             try db.create(index: "idx_devices_ip", on: "devices", columns: ["ip"])
             try db.create(index: "idx_devices_lastSeen", on: "devices", columns: ["lastSeen"])
             try db.create(index: "idx_devices_isOnline", on: "devices", columns: ["isOnline"])
         }
-        
+
+        // Version 2: Enhanced inference fields (Issue #2)
+        migrator.registerMigration("v2_enhanced_inference") { db in
+            try db.alter(table: "devices") { t in
+                t.add(column: "mdnsTXTRecords", .text)
+                t.add(column: "portBanners", .text)
+                t.add(column: "macAnalysis", .text)
+                t.add(column: "securityPosture", .text)
+                t.add(column: "behaviorProfile", .text)
+            }
+        }
+
+        // Version 3: Network source information for multi-VLAN support (Issue #6)
+        migrator.registerMigration("v3_network_source") { db in
+            try db.alter(table: "devices") { t in
+                t.add(column: "sourceInterface", .text)
+                t.add(column: "subnet", .text)
+            }
+            // Index for filtering by interface/subnet
+            try db.create(index: "idx_devices_sourceInterface", on: "devices", columns: ["sourceInterface"])
+            try db.create(index: "idx_devices_subnet", on: "devices", columns: ["subnet"])
+        }
+
+        // Version 4: Presence records table for behavior tracking (Issue #4)
+        migrator.registerMigration("v4_presence_records") { db in
+            // Create presence_records table for historical behavior tracking
+            try db.create(table: "presence_records", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("mac", .text).notNull().indexed()
+                t.column("timestamp", .datetime).notNull().indexed()
+                t.column("isOnline", .boolean).notNull()
+                t.column("ipAddress", .text)
+                t.column("availableServices", .text).notNull().defaults(to: "[]")
+                t.foreignKey(["mac"], references: "devices", columns: ["mac"], onDelete: .cascade)
+            }
+
+            // Composite index for efficient time-range queries per device
+            try db.create(index: "idx_presence_mac_timestamp", on: "presence_records", columns: ["mac", "timestamp"])
+        }
+
         // Apply migrations
         try migrator.migrate(dbPool)
     }
