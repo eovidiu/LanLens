@@ -647,32 +647,54 @@ private struct PortPill: View {
 private struct ServicesCard: View {
     let services: [DiscoveredService]
 
+    /// Deduplicated services grouped by display name, with combined discovery types
+    private var uniqueServices: [(displayName: String, types: [ServiceDiscoveryType])] {
+        var grouped: [String: [ServiceDiscoveryType]] = [:]
+        for service in services {
+            let name = service.displayName
+            if grouped[name] != nil {
+                if !grouped[name]!.contains(service.type) {
+                    grouped[name]!.append(service.type)
+                }
+            } else {
+                grouped[name] = [service.type]
+            }
+        }
+        return grouped.map { (displayName: $0.key, types: $0.value) }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            CardHeader(title: "Services", icon: "square.stack.3d.up", count: services.count)
+            CardHeader(title: "Services", icon: "square.stack.3d.up", count: uniqueServices.count)
 
             VStack(spacing: 6) {
-                ForEach(Array(services.enumerated()), id: \.offset) { _, service in
+                ForEach(uniqueServices, id: \.displayName) { service in
                     HStack(spacing: 8) {
-                        Image(systemName: serviceIcon(for: service.type))
+                        Image(systemName: serviceIcon(for: service.types.first ?? .mdns))
                             .font(.system(size: 11))
                             .foregroundStyle(Color.lanLensAccent)
                             .frame(width: 16)
 
-                        Text(service.name)
+                        Text(service.displayName)
                             .font(.system(size: 12))
                             .foregroundStyle(.white)
                             .lineLimit(1)
 
                         Spacer()
 
-                        Text(service.type.rawValue)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(Color.lanLensSecondaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.lanLensBackground)
-                            .cornerRadius(4)
+                        // Show all discovery types for this service
+                        HStack(spacing: 4) {
+                            ForEach(service.types, id: \.self) { type in
+                                Text(type.rawValue)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(Color.lanLensSecondaryText)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(Color.lanLensBackground)
+                                    .cornerRadius(4)
+                            }
+                        }
                     }
                 }
             }

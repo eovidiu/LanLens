@@ -532,12 +532,13 @@ public actor DiscoveryManager {
                     device.hostname = hostname
                 }
 
-                // Add the service
+                // Add the service with mDNS service type for friendly display names
                 let discoveredService = DiscoveredService(
                     name: service.name,
                     type: .mdns,
                     port: service.port,
-                    txt: service.txtRecords
+                    txt: service.txtRecords,
+                    mdnsServiceType: service.type
                 )
 
                 if !device.services.contains(discoveredService) {
@@ -625,12 +626,13 @@ public actor DiscoveryManager {
                     device.hostname = hostName
                 }
 
-                // Add the service
+                // Add the service with mDNS service type for friendly display names
                 let discoveredService = DiscoveredService(
                     name: service.name,
                     type: .mdns,
                     port: service.port,
-                    txt: service.txtRecords
+                    txt: service.txtRecords,
+                    mdnsServiceType: service.type
                 )
 
                 if !device.services.contains(discoveredService) {

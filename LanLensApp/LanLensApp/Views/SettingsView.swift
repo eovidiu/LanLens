@@ -22,6 +22,7 @@ struct SettingsView: View {
                     FingerprintingSettingsSection(preferences: preferences)
                     NotificationSettingsSection(preferences: preferences)
                     ExportSection(appState: appState)
+                    DataManagementSection(appState: appState)
                     AboutSection(appState: appState)
                     Spacer(minLength: 20)
                 }
@@ -527,6 +528,106 @@ private struct ExportSection: View {
     }
 }
 
+// MARK: - Data Management Section
+
+private struct DataManagementSection: View {
+    let appState: AppState
+    @State private var showClearConfirmation = false
+    @State private var clearMessage: String?
+    @State private var isSuccess = false
+
+    var body: some View {
+        SettingsSectionView(title: "DATA MANAGEMENT") {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Clear Device Data")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white)
+                    Text("\(appState.deviceCount) devices stored")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.lanLensSecondaryText)
+                }
+
+                Spacer()
+
+                Button {
+                    showClearConfirmation = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                        Text("Clear")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(appState.deviceCount > 0 ? Color.lanLensDanger : Color.lanLensSecondaryText)
+                }
+                .buttonStyle(.plain)
+                .disabled(appState.deviceCount == 0)
+            }
+
+            // Status message
+            if let message = clearMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isSuccess ? Color.lanLensSuccess : Color.lanLensWarning)
+                    Text(message)
+                        .font(.system(size: 10))
+                        .foregroundStyle(isSuccess ? Color.lanLensSuccess : Color.lanLensWarning)
+                    Spacer()
+                }
+                .transition(.opacity)
+            }
+
+            // Info text
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.lanLensSecondaryText)
+                Text("Clearing data removes all discovered devices. Scan again to rediscover devices on your network.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.lanLensSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .popover(isPresented: $showClearConfirmation, arrowEdge: .trailing) {
+            ClearDevicesConfirmationView(
+                deviceCount: appState.deviceCount,
+                onConfirm: { preserveLabels in
+                    showClearConfirmation = false
+                    Task {
+                        await performClear(preserveLabels: preserveLabels)
+                    }
+                },
+                onCancel: {
+                    showClearConfirmation = false
+                }
+            )
+        }
+    }
+
+    private func performClear(preserveLabels: Bool) async {
+        await appState.clearAllDevices(preserveLabels: preserveLabels)
+
+        await MainActor.run {
+            isSuccess = true
+            clearMessage = "All devices cleared"
+            clearMessageAfterDelay()
+        }
+    }
+
+    private func clearMessageAfterDelay() {
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            await MainActor.run {
+                withAnimation {
+                    clearMessage = nil
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Export Format Picker
 
 private struct ExportFormatPicker: View {
@@ -626,13 +727,18 @@ private struct ToggleRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        Toggle(isOn: $isOn) {
+        HStack {
             Text(title)
                 .font(.system(size: 12))
                 .foregroundStyle(.white)
+
+            Spacer()
+
+            Toggle("", isOn: $isOn)
+                .toggleStyle(.switch)
+                .tint(Color.lanLensAccent)
+                .labelsHidden()
         }
-        .toggleStyle(.switch)
-        .tint(Color.lanLensAccent)
     }
 }
 

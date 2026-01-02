@@ -107,9 +107,17 @@ public actor DeviceStore: DeviceStoreProtocol {
     
     public func addOrUpdate(device: Device) async throws {
         await ensureLoaded()
-        
+
+        // Filter out devices with invalid IPs (multicast, loopback, broadcast, etc.)
+        guard IPAddressValidator.isValidDeviceIP(device.ip) else {
+            if let reason = IPAddressValidator.invalidReason(for: device.ip) {
+                Log.debug("DeviceStore: Rejecting device \(device.mac) with invalid IP \(device.ip) (\(reason))", category: .discovery)
+            }
+            return
+        }
+
         let mac = device.mac.uppercased()
-        
+
         // Merge with existing device if present
         if let existing = cache[mac] {
             var merged = device
@@ -118,9 +126,9 @@ public actor DeviceStore: DeviceStoreProtocol {
         } else {
             cache[mac] = device
         }
-        
+
         pendingChanges.insert(mac)
-        
+
         if autoSyncEnabled {
             try await syncSingle(mac: mac)
         }
@@ -128,10 +136,18 @@ public actor DeviceStore: DeviceStoreProtocol {
     
     public func addOrUpdateAll(devices: [Device]) async throws {
         await ensureLoaded()
-        
+
         for device in devices {
+            // Filter out devices with invalid IPs (multicast, loopback, broadcast, etc.)
+            guard IPAddressValidator.isValidDeviceIP(device.ip) else {
+                if let reason = IPAddressValidator.invalidReason(for: device.ip) {
+                    Log.debug("DeviceStore: Rejecting device \(device.mac) with invalid IP \(device.ip) (\(reason))", category: .discovery)
+                }
+                continue
+            }
+
             let mac = device.mac.uppercased()
-            
+
             if let existing = cache[mac] {
                 var merged = device
                 merged = mergeDevices(existing: existing, new: merged)
@@ -139,10 +155,10 @@ public actor DeviceStore: DeviceStoreProtocol {
             } else {
                 cache[mac] = device
             }
-            
+
             pendingChanges.insert(mac)
         }
-        
+
         if autoSyncEnabled {
             try await sync()
         }
@@ -176,7 +192,31 @@ public actor DeviceStore: DeviceStoreProtocol {
     
     public func load() async throws {
         let devices = try await repository.fetchAll()
-        cache = Dictionary(uniqueKeysWithValues: devices.map { ($0.mac, $0) })
+
+        // Filter out devices with invalid IPs when loading from persistence
+        // This cleans up any devices that were persisted before validation was added
+        var validDevices: [Device] = []
+        var invalidMacs: [String] = []
+        for device in devices {
+            if IPAddressValidator.isValidDeviceIP(device.ip) {
+                validDevices.append(device)
+            } else {
+                invalidMacs.append(device.mac)
+                if let reason = IPAddressValidator.invalidReason(for: device.ip) {
+                    Log.debug("DeviceStore: Filtering persisted device \(device.mac) with invalid IP \(device.ip) (\(reason))", category: .discovery)
+                }
+            }
+        }
+
+        // Permanently delete invalid devices from the database
+        if !invalidMacs.isEmpty {
+            Log.info("DeviceStore: Removing \(invalidMacs.count) device(s) with invalid IPs from database", category: .discovery)
+            for mac in invalidMacs {
+                try? await repository.delete(mac: mac)
+            }
+        }
+
+        cache = Dictionary(uniqueKeysWithValues: validDevices.map { ($0.mac, $0) })
         isLoaded = true
         pendingChanges.removeAll()
     }

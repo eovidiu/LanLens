@@ -484,4 +484,35 @@ final class AppState {
             devices.sort { $0.smartScore > $1.smartScore }
         }
     }
+
+    // MARK: - Data Management
+
+    /// Clears all discovered devices from both memory and persistent storage.
+    /// - Parameter preserveLabels: If true, custom device labels will be preserved for future scans (not yet implemented)
+    func clearAllDevices(preserveLabels: Bool = true) async {
+        logger.info("Clearing all devices (preserveLabels: \(preserveLabels))")
+
+        // Stop any ongoing scan first
+        stopScanning()
+
+        // Clear devices from persistent storage via DiscoveryManager's DeviceStore
+        do {
+            let deviceStore = await DiscoveryManager.shared.getDeviceStore()
+            try await deviceStore.removeAll()
+            logger.debug("DeviceStore cleared successfully")
+        } catch {
+            logger.error("Failed to clear DeviceStore: \(error.localizedDescription)")
+        }
+
+        // Clear local state with animation
+        withAnimation(.easeInOut(duration: 0.2)) {
+            devices.removeAll()
+        }
+
+        lastScanTime = nil
+        selectedDevice = nil
+        scanError = nil
+
+        logger.info("All devices cleared")
+    }
 }

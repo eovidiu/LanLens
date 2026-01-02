@@ -170,17 +170,65 @@ public struct DiscoveredService: Codable, Sendable, Hashable {
     public let type: ServiceDiscoveryType
     public let port: Int?
     public let txt: [String: String]
+    /// The mDNS service type (e.g., "_airplay._tcp", "_spotify-connect._tcp")
+    public let mdnsServiceType: String?
 
     public init(
         name: String,
         type: ServiceDiscoveryType,
         port: Int? = nil,
-        txt: [String: String] = [:]
+        txt: [String: String] = [:],
+        mdnsServiceType: String? = nil
     ) {
         self.name = name
         self.type = type
         self.port = port
         self.txt = txt
+        self.mdnsServiceType = mdnsServiceType
+    }
+
+    /// A user-friendly display name for the service
+    public var displayName: String {
+        // For mDNS services, prefer the friendly service type name
+        if let mdnsType = mdnsServiceType {
+            if let friendly = Self.friendlyServiceName(for: mdnsType) {
+                return friendly
+            }
+        }
+        // Clean up raw names: strip MAC prefixes (e.g., "001FF010CA08@CXN100" -> "CXN100")
+        if let atIndex = name.firstIndex(of: "@") {
+            let afterAt = String(name[name.index(after: atIndex)...])
+            if !afterAt.isEmpty {
+                return afterAt
+            }
+        }
+        return name
+    }
+
+    /// Maps mDNS service types to friendly names
+    private static func friendlyServiceName(for mdnsType: String) -> String? {
+        switch mdnsType {
+        case "_airplay._tcp": return "AirPlay"
+        case "_raop._tcp": return "AirPlay Audio"
+        case "_spotify-connect._tcp": return "Spotify Connect"
+        case "_googlecast._tcp": return "Google Cast"
+        case "_hap._tcp", "_homekit._tcp": return "HomeKit"
+        case "_printer._tcp", "_ipp._tcp": return "Printer"
+        case "_scanner._tcp": return "Scanner"
+        case "_http._tcp": return "Web Server"
+        case "_https._tcp": return "Secure Web"
+        case "_ssh._tcp": return "SSH"
+        case "_smb._tcp": return "File Sharing (SMB)"
+        case "_afpovertcp._tcp": return "File Sharing (AFP)"
+        case "_sonos._tcp": return "Sonos"
+        case "_hue._tcp": return "Philips Hue"
+        case "_mqtt._tcp": return "MQTT"
+        case "_dacp._tcp": return "Remote Control"
+        case "_touch-able._tcp": return "Apple Remote"
+        case "_companion-link._tcp": return "Companion Link"
+        case "_device-info._tcp": return "Device Info"
+        default: return nil
+        }
     }
 }
 

@@ -437,6 +437,7 @@ private struct MoreMenu: View {
 
     @State private var isHovered = false
     @State private var showMenu = false
+    @State private var showClearConfirmation = false
 
     var body: some View {
         Button {
@@ -497,12 +498,42 @@ private struct MoreMenu: View {
                 Divider()
                     .padding(.vertical, 4)
 
+                MenuButton(
+                    title: "Clear Data",
+                    icon: "trash",
+                    isDestructive: true
+                ) {
+                    showMenu = false
+                    // Small delay to let the menu close before showing confirmation
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showClearConfirmation = true
+                    }
+                }
+                .disabled(appState.deviceCount == 0)
+
+                Divider()
+                    .padding(.vertical, 4)
+
                 MenuButton(title: "Quit Lan Lens", icon: "xmark.circle", shortcut: "⌘Q") {
                     NSApplication.shared.terminate(nil)
                 }
             }
             .padding(8)
             .frame(width: 180)
+        }
+        .popover(isPresented: $showClearConfirmation, arrowEdge: .bottom) {
+            ClearDevicesConfirmationView(
+                deviceCount: appState.deviceCount,
+                onConfirm: { preserveLabels in
+                    showClearConfirmation = false
+                    Task {
+                        await appState.clearAllDevices(preserveLabels: preserveLabels)
+                    }
+                },
+                onCancel: {
+                    showClearConfirmation = false
+                }
+            )
         }
     }
 }
@@ -513,10 +544,22 @@ private struct MenuButton: View {
     let title: String
     let icon: String
     var shortcut: String? = nil
+    var isDestructive: Bool = false
     let action: () -> Void
 
     @State private var isHovered = false
     @Environment(\.isEnabled) private var isEnabled
+
+    private var textColor: Color {
+        if !isEnabled {
+            return .secondary
+        }
+        return isDestructive ? Color.lanLensDanger : .primary
+    }
+
+    private var hoverColor: Color {
+        isDestructive ? Color.lanLensDanger.opacity(0.2) : Color.accentColor.opacity(0.2)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -524,11 +567,11 @@ private struct MenuButton: View {
                 Image(systemName: icon)
                     .font(.system(size: 12))
                     .frame(width: 16)
-                    .foregroundColor(isEnabled ? .primary : .secondary)
+                    .foregroundColor(textColor)
 
                 Text(title)
                     .font(.system(size: 13))
-                    .foregroundColor(isEnabled ? .primary : .secondary)
+                    .foregroundColor(textColor)
 
                 Spacer()
 
@@ -542,7 +585,7 @@ private struct MenuButton: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(isHovered && isEnabled ? Color.accentColor.opacity(0.2) : Color.clear)
+                    .fill(isHovered && isEnabled ? hoverColor : Color.clear)
             )
             .contentShape(Rectangle())
         }

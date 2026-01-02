@@ -6,7 +6,7 @@ let package = Package(
     platforms: [
         .macOS(.v14)
     ],
-    products: [
+    products: [ 
         .library(name: "LanLensCore", targets: ["LanLensCore"])
     ],
     dependencies: [
