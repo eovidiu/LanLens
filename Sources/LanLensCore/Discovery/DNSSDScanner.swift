@@ -204,10 +204,17 @@ public actor DNSSDScanner {
                                 case .ipv4(let addr):
                                     // Strip interface suffix (e.g., "192.168.0.31%en0" -> "192.168.0.31")
                                     let addrStr = "\(addr)"
+                                    var cleanedAddr: String
                                     if let percentIndex = addrStr.firstIndex(of: "%") {
-                                        ip = String(addrStr[..<percentIndex])
+                                        cleanedAddr = String(addrStr[..<percentIndex])
                                     } else {
-                                        ip = addrStr
+                                        cleanedAddr = addrStr
+                                    }
+                                    // Validate the IP - filter multicast, loopback, etc.
+                                    if IPAddressValidator.isValidDeviceIP(cleanedAddr) {
+                                        ip = cleanedAddr
+                                    } else if let reason = IPAddressValidator.invalidReason(for: cleanedAddr) {
+                                        Log.debug("NWConnection: Filtered invalid IPv4: \(cleanedAddr) (\(reason))", category: .mdns)
                                     }
                                 case .ipv6(let addr):
                                     var addrStr = "\(addr)"
@@ -215,16 +222,16 @@ public actor DNSSDScanner {
                                     if let percentIndex = addrStr.firstIndex(of: "%") {
                                         addrStr = String(addrStr[..<percentIndex])
                                     }
-                                    // Skip loopback, but keep link-local IPv6 addresses as fallback
-                                    // We'll try to get IPv4 later via hostname lookup
-                                    if addrStr != "::1" {
-                                        // Mark as link-local for later IPv4 lookup attempt
-                                        if addrStr.hasPrefix("fe80:") {
-                                            // Store the link-local as a fallback, we'll try to get IPv4 via hostname
+                                    // Validate the IP - handles loopback and multicast
+                                    if IPAddressValidator.isValidDeviceIP(addrStr) {
+                                        // Still skip link-local IPv6 for device identification, prefer IPv4
+                                        if IPAddressValidator.isLinkLocalIPv6(addrStr) {
                                             Log.debug("NWConnection: Got link-local IPv6, will try hostname lookup", category: .mdns)
                                         } else {
                                             ip = addrStr
                                         }
+                                    } else if let reason = IPAddressValidator.invalidReason(for: addrStr) {
+                                        Log.debug("NWConnection: Filtered invalid IPv6: \(addrStr) (\(reason))", category: .mdns)
                                     }
                                 case .name(let name, _):
                                     hostname = name
@@ -480,13 +487,42 @@ public actor DNSSDScanner {
         let lines = output.components(separatedBy: "\n")
 
         for line in lines {
-            // Look for A record response
-            // Format: "12:34:56.789  Add 40000002  4 mydevice.local.  Addr 192.168.1.100"
+            // Look for A record response - actual format from dns-sd -G v4:
+            // "Timestamp     A/R  Flags         IF  Hostname                               Address                                      TTL"
+            // "14:57:04.161  Add  40000002      14  Ovidius-MacBook-Pro.local.             192.168.0.31                                 4500"
+            // The IP address is in the second-to-last column before TTL
+
+            // Skip header line and empty lines
+            if line.contains("Add") && !line.contains("Timestamp") && !line.contains("A/R") {
+                let components = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                // Format: [Timestamp, Add, Flags, IF, Hostname, Address, TTL]
+                // Minimum 6 components needed, IP is at index count-2 (before TTL)
+                if components.count >= 6 {
+                    // Try second-to-last column (before TTL)
+                    let potentialIP = components[components.count - 2]
+                    // Validate it's an IPv4 address pattern
+                    if potentialIP.range(of: #"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"#, options: .regularExpression) != nil {
+                        // Validate it's a valid device IP (not multicast, loopback, etc.)
+                        if IPAddressValidator.isValidDeviceIP(potentialIP) {
+                            return potentialIP
+                        } else if let reason = IPAddressValidator.invalidReason(for: potentialIP) {
+                            Log.debug("dns-sd: Filtered invalid IP from query output: \(potentialIP) (\(reason))", category: .mdns)
+                        }
+                    }
+                }
+            }
+
+            // Also check for legacy format with "Addr" keyword just in case
             if line.contains("Addr") {
                 let components = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
                 if let addrIndex = components.firstIndex(of: "Addr"),
                    addrIndex + 1 < components.count {
-                    return components[addrIndex + 1]
+                    let ip = components[addrIndex + 1]
+                    if IPAddressValidator.isValidDeviceIP(ip) {
+                        return ip
+                    } else if let reason = IPAddressValidator.invalidReason(for: ip) {
+                        Log.debug("dns-sd: Filtered invalid IP from query output: \(ip) (\(reason))", category: .mdns)
+                    }
                 }
             }
         }

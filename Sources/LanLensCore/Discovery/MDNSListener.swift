@@ -175,16 +175,22 @@ public actor MDNSListener {
                                     if let percentIndex = addrStr.firstIndex(of: "%") {
                                         addrStr = String(addrStr[..<percentIndex])
                                     }
-                                    ip = addrStr
+                                    // Validate the IP - filter multicast, loopback, etc.
+                                    if IPAddressValidator.isValidDeviceIP(addrStr) {
+                                        ip = addrStr
+                                    }
                                 case .ipv6(let addr):
                                     var addrStr = "\(addr)"
                                     // Strip interface suffix
                                     if let percentIndex = addrStr.firstIndex(of: "%") {
                                         addrStr = String(addrStr[..<percentIndex])
                                     }
-                                    // Skip loopback
-                                    if addrStr != "::1" && !addrStr.hasPrefix("fe80:") {
-                                        ip = addrStr
+                                    // Validate the IP - handles loopback and multicast
+                                    if IPAddressValidator.isValidDeviceIP(addrStr) {
+                                        // Skip link-local IPv6 for device identification (prefer IPv4)
+                                        if !IPAddressValidator.isLinkLocalIPv6(addrStr) {
+                                            ip = addrStr
+                                        }
                                     }
                                 case .name(let hostName, _):
                                     hostname = hostName

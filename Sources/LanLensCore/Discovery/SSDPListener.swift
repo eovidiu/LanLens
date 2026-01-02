@@ -188,7 +188,12 @@ public actor SSDPListener {
         // Extract IP from location URL
         var hostIP: String? = nil
         if let url = URL(string: location), let host = url.host {
-            hostIP = host
+            // Validate the IP - filter out multicast, loopback, etc.
+            if IPAddressValidator.isValidDeviceIP(host) {
+                hostIP = host
+            } else if let reason = IPAddressValidator.invalidReason(for: host) {
+                Log.debug("Filtered invalid IP from SSDP LOCATION: \(host) (\(reason))", category: .ssdp)
+            }
         }
 
         let device = SSDPDevice(

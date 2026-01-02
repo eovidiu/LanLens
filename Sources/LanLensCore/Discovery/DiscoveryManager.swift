@@ -509,7 +509,13 @@ public actor DiscoveryManager {
     // MARK: - Private
 
     private func handleMDNSService(_ service: MDNSListener.MDNSService) async {
-        guard let hostIP = service.hostIP else { return }
+        guard let hostIP = service.hostIP,
+              IPAddressValidator.isValidDeviceIP(hostIP) else {
+            if let ip = service.hostIP, let reason = IPAddressValidator.invalidReason(for: ip) {
+                Log.debug("handleMDNSService: Filtered invalid IP \(ip) (\(reason))", category: .mdns)
+            }
+            return
+        }
 
         // We need to find the MAC for this IP
         // Check ARP table
@@ -594,8 +600,13 @@ public actor DiscoveryManager {
     }
 
     private func handleDNSSDService(_ service: DNSSDScanner.DNSSDService) async {
-        guard let ip = service.ip else {
-            Log.debug("DNS-SD: No IP for service \(service.name), skipping", category: .discovery)
+        guard let ip = service.ip,
+              IPAddressValidator.isValidDeviceIP(ip) else {
+            if let actualIP = service.ip, let reason = IPAddressValidator.invalidReason(for: actualIP) {
+                Log.debug("DNS-SD: Filtered invalid IP \(actualIP) for service \(service.name) (\(reason))", category: .discovery)
+            } else {
+                Log.debug("DNS-SD: No IP for service \(service.name), skipping", category: .discovery)
+            }
             return
         }
 
@@ -685,8 +696,13 @@ public actor DiscoveryManager {
     }
 
     private func handleSSDPDevice(_ ssdpDevice: SSDPListener.SSDPDevice) async {
-        guard let hostIP = ssdpDevice.hostIP else {
-            Log.warning("SSDP: No host IP in SSDP device, skipping", category: .ssdp)
+        guard let hostIP = ssdpDevice.hostIP,
+              IPAddressValidator.isValidDeviceIP(hostIP) else {
+            if let ip = ssdpDevice.hostIP, let reason = IPAddressValidator.invalidReason(for: ip) {
+                Log.debug("SSDP: Filtered invalid IP \(ip) from device (\(reason))", category: .ssdp)
+            } else {
+                Log.warning("SSDP: No host IP in SSDP device, skipping", category: .ssdp)
+            }
             return
         }
 
