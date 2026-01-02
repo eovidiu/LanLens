@@ -224,6 +224,45 @@ public final class DatabaseManager: DatabaseProtocol, @unchecked Sendable {
             try db.create(index: "idx_devices_dhcp_hash", on: "devices", columns: ["dhcpFingerprintHash"])
         }
 
+        // Version 7: TLS fingerprint (JA3S) for device identification (Phase 3)
+        migrator.registerMigration("v7_tls_fingerprint") { db in
+            // Create TLS fingerprint capture table for historical tracking
+            try db.create(table: "tls_fingerprints", ifNotExists: true) { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("mac", .text).notNull()
+                t.column("host", .text).notNull()
+                t.column("port", .integer).notNull()
+                t.column("ja3s_hash", .text).notNull()
+                t.column("ja3s_raw", .text)
+                t.column("tls_version", .text)
+                t.column("cipher_suite", .text)
+                t.column("server_cn", .text)
+                t.column("server_org", .text)
+                t.column("captured_at", .datetime).notNull()
+                t.foreignKey(["mac"], references: "devices", columns: ["mac"], onDelete: .cascade)
+            }
+
+            // Index for efficient lookups by MAC
+            try db.create(index: "idx_tls_fingerprints_mac", on: "tls_fingerprints", columns: ["mac"])
+
+            // Index for JA3S hash lookups (for database matching)
+            try db.create(index: "idx_tls_fingerprints_ja3s", on: "tls_fingerprints", columns: ["ja3s_hash"])
+
+            // Index for time-based queries
+            try db.create(index: "idx_tls_fingerprints_captured", on: "tls_fingerprints", columns: ["captured_at"])
+
+            // Add latest TLS fingerprint columns to devices table for quick access
+            try db.alter(table: "devices") { t in
+                // Latest JA3S hash from TLS probing
+                t.add(column: "tlsJA3SHash", .text)
+                // When TLS was last probed
+                t.add(column: "tlsProbedAt", .datetime)
+            }
+
+            // Index for efficient TLS hash lookups on devices
+            try db.create(index: "idx_devices_tls_ja3s", on: "devices", columns: ["tlsJA3SHash"])
+        }
+
         // Apply migrations
         try migrator.migrate(dbPool)
     }

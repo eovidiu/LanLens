@@ -25,6 +25,7 @@ public actor DeviceTypeInferenceEngine {
         case macAnalysis     // MAC address analysis (medium confidence)
         case behavior        // Device presence/usage patterns
         case dhcpFingerprint // DHCP Option 55 fingerprint (high confidence)
+        case tlsFingerprint  // TLS Server Hello fingerprint (JA3S) - high confidence
     }
     
     /// A signal suggesting a device type with associated confidence
@@ -49,6 +50,7 @@ public actor DeviceTypeInferenceEngine {
         .mdnsTXT: 0.85,         // Parsed mDNS TXT records are very informative
         .upnp: 0.8,             // UPnP device descriptions are quite accurate
         .portBanner: 0.75,      // Parsed port banners provide good device info
+        .tlsFingerprint: 0.70,  // TLS Server Hello fingerprint (JA3S) - high confidence
         .mdns: 0.7,             // mDNS service types are good indicators
         .ssdp: 0.7,             // SSDP headers are good indicators
         .dhcpFingerprint: 0.65, // DHCP Option 55 fingerprint - per architecture doc
@@ -610,6 +612,39 @@ public actor DeviceTypeInferenceEngine {
     public func signalsFromDHCPMatchResult(_ matchResult: DHCPFingerprintMatcher.MatchResult) async -> [Signal] {
         let matcher = DHCPFingerprintMatcher.shared
         return await matcher.generateSignals(from: matchResult)
+    }
+
+    /// Create signals from TLS fingerprint data.
+    ///
+    /// This method uses the TLSFingerprintMatcher to analyze JA3S fingerprints
+    /// and generate inference signals.
+    ///
+    /// - Parameter ja3sHash: JA3S hash from TLS Server Hello
+    /// - Returns: Array of inferred signals
+    public func signalsFromTLSFingerprint(_ ja3sHash: String) async -> [Signal] {
+        let matcher = TLSFingerprintMatcher.shared
+        return await matcher.matchAndGenerateSignals(ja3sHash: ja3sHash)
+    }
+
+    /// Create signals from a pre-computed TLS match result.
+    ///
+    /// Use this when you already have a match result from TLSFingerprintMatcher
+    /// to avoid duplicate database lookups.
+    ///
+    /// - Parameter matchResult: A match result from TLSFingerprintMatcher
+    /// - Returns: Array of inferred signals
+    public func signalsFromTLSMatchResult(_ matchResult: TLSFingerprintMatcher.MatchResult) async -> [Signal] {
+        let matcher = TLSFingerprintMatcher.shared
+        return await matcher.generateSignals(from: matchResult)
+    }
+
+    /// Create signals from a TLS probe result.
+    ///
+    /// - Parameter probeResult: A probe result from TLSFingerprintProber
+    /// - Returns: Array of inferred signals
+    public func signalsFromTLSProbeResult(_ probeResult: TLSFingerprintProber.ProbeResult) async -> [Signal] {
+        guard let fingerprint = probeResult.ja3sFingerprint else { return [] }
+        return await signalsFromTLSFingerprint(fingerprint.hash)
     }
 
     // MARK: - Convenience Methods

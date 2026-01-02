@@ -25,6 +25,7 @@ public enum LogCategory: String, CaseIterable, Sendable {
     case export = "Export"
     case websocket = "WebSocket"
     case dhcp = "DHCP"
+    case tls = "TLS"
 }
 
 // MARK: - File Log Configuration

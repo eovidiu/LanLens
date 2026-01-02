@@ -52,6 +52,14 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
     /// When DHCP fingerprint was captured
     public var dhcpCapturedAt: Date?
 
+    // MARK: - TLS Fingerprint Data
+
+    /// Latest JA3S hash from TLS probing (MD5 of Server Hello fingerprint)
+    public var tlsJA3SHash: String?
+
+    /// When TLS was last probed
+    public var tlsProbedAt: Date?
+
     // MARK: - Network Source Information
 
     /// The network interface this device was discovered on (e.g., "en0")
@@ -85,6 +93,8 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         dhcpFingerprintHash: String? = nil,
         dhcpFingerprintString: String? = nil,
         dhcpCapturedAt: Date? = nil,
+        tlsJA3SHash: String? = nil,
+        tlsProbedAt: Date? = nil,
         sourceInterface: String? = nil,
         subnet: String? = nil
     ) {
@@ -112,6 +122,8 @@ public struct Device: Identifiable, Codable, Sendable, Hashable {
         self.dhcpFingerprintHash = dhcpFingerprintHash
         self.dhcpFingerprintString = dhcpFingerprintString
         self.dhcpCapturedAt = dhcpCapturedAt
+        self.tlsJA3SHash = tlsJA3SHash
+        self.tlsProbedAt = tlsProbedAt
         self.sourceInterface = sourceInterface
         self.subnet = subnet
     }

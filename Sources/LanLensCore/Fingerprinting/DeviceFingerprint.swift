@@ -181,6 +181,9 @@ public enum FingerprintSource: String, Codable, Sendable {
     /// Both UPnP and Fingerbank contributed data
     case both
 
+    /// TLS Server Hello fingerprint (JA3S)
+    case tlsFingerprint
+
     /// No fingerprint data available
     case none
 }
