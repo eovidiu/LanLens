@@ -43,6 +43,10 @@ final class AppState {
     private var apiServerTask: Task<Void, Never>?
     private var passiveDiscoveryActive = false
     private var currentScanTask: Task<Void, Never>?
+    private var currentDeepScanTask: Task<Void, Never>?
+
+    /// Tracks whether a single-device deep scan is in progress
+    private(set) var isDeepScanning = false
 
     // MARK: - Debouncing State (Prevents unbounded task spawning)
 
@@ -340,17 +344,50 @@ final class AppState {
     }
 
     func scanPorts(for device: Device) async {
-        isScanning = true
+        // Cancel any existing deep scan
+        currentDeepScanTask?.cancel()
 
-        _ = await DiscoveryManager.shared.scanPorts(for: device.mac)
-        await refreshDevices()
+        isDeepScanning = true
 
-        // Update selected device if it was the one scanned
-        if let selected = selectedDevice, selected.mac == device.mac {
-            selectedDevice = devices.first { $0.mac == device.mac }
+        // Create a cancellable task for the deep scan
+        currentDeepScanTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+
+            // Check for cancellation before starting
+            guard !Task.isCancelled else {
+                logger.info("Deep scan cancelled before starting")
+                return
+            }
+
+            _ = await DiscoveryManager.shared.scanPorts(for: device.mac)
+
+            // Check for cancellation after scan completes
+            guard !Task.isCancelled else {
+                logger.info("Deep scan cancelled after port scan")
+                return
+            }
+
+            await self.refreshDevices()
+
+            // Update selected device if it was the one scanned
+            if let selected = self.selectedDevice, selected.mac == device.mac {
+                self.selectedDevice = self.devices.first { $0.mac == device.mac }
+            }
         }
 
-        isScanning = false
+        // Wait for the scan to complete (or be cancelled)
+        await currentDeepScanTask?.value
+
+        isDeepScanning = false
+        currentDeepScanTask = nil
+    }
+
+    /// Stops any ongoing deep scan for a single device.
+    func stopDeepScan() {
+        logger.info("Stop deep scan requested")
+        currentDeepScanTask?.cancel()
+        currentDeepScanTask = nil
+        isDeepScanning = false
     }
 
     // MARK: - API Server Methods

@@ -6,8 +6,6 @@ struct DeviceDetailView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
-    @State private var isScanning = false
-
     /// Get the current device data from appState (refreshes after scan)
     private var currentDevice: Device {
         appState.devices.first { $0.mac == device.mac } ?? device
@@ -87,13 +85,14 @@ struct DeviceDetailView: View {
             // Bottom action bar
             BottomActionBar(
                 device: currentDevice,
-                isScanning: isScanning,
+                isScanning: appState.isDeepScanning,
                 onRescan: {
                     Task {
-                        isScanning = true
                         await appState.scanPorts(for: device)
-                        isScanning = false
                     }
+                },
+                onStop: {
+                    appState.stopDeepScan()
                 }
             )
         }
@@ -808,31 +807,55 @@ private struct BottomActionBar: View {
     let device: Device
     let isScanning: Bool
     let onRescan: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Button(action: onRescan) {
-                HStack(spacing: 6) {
-                    if isScanning {
+            if isScanning {
+                // Scanning state: show progress indicator and stop button
+                HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         ProgressView()
                             .scaleEffect(0.7)
                             .frame(width: 12, height: 12)
-                    } else {
+                        Text("Scanning...")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.lanLensAccent.opacity(0.7))
+                    .cornerRadius(6)
+
+                    // Stop button
+                    Button(action: onStop) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(Color.lanLensDanger)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.escape, modifiers: [])
+                    .help("Stop scan")
+                    .accessibilityLabel("Stop scanning")
+                }
+            } else {
+                // Idle state: show Deep Scan button
+                Button(action: onRescan) {
+                    HStack(spacing: 6) {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 11, weight: .semibold))
+                        Text("Deep Scan")
+                            .font(.system(size: 12, weight: .medium))
                     }
-                    Text(isScanning ? "Scanning..." : "Deep Scan")
-                        .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.lanLensAccent)
+                    .cornerRadius(6)
                 }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color.lanLensAccent)
-                .cornerRadius(6)
+                .buttonStyle(.plain)
+                .keyboardShortcut("r", modifiers: .command)
             }
-            .buttonStyle(.plain)
-            .disabled(isScanning)
-            .keyboardShortcut("r", modifiers: .command)
 
             Spacer()
 
