@@ -432,6 +432,50 @@ public actor DiscoveryManager {
             }
         }
 
+        // TLS fingerprinting: probe HTTPS ports if available
+        let httpsPortNumbers: [UInt16] = [443, 8443, 9443]
+        let openHTTPSPorts = device.openPorts.filter { port in
+            httpsPortNumbers.contains(UInt16(port.number))
+        }
+
+        if !openHTTPSPorts.isEmpty {
+            Log.debug("Probing TLS on \(openHTTPSPorts.count) HTTPS port(s) for \(device.mac)", category: .tls)
+
+            // Probe the first open HTTPS port
+            let firstHTTPSPort = openHTTPSPorts[0]
+            let probeResult = await TLSFingerprintProber.shared.probe(
+                host: device.ip,
+                port: UInt16(firstHTTPSPort.number)
+            )
+
+            if probeResult.isSuccess, let ja3sFingerprint = probeResult.ja3sFingerprint {
+                device.tlsJA3SHash = ja3sFingerprint.hash
+                device.tlsProbedAt = probeResult.probedAt
+                Log.info("TLS fingerprint captured for \(device.mac): JA3S=\(ja3sFingerprint.hash.prefix(16))...", category: .tls)
+
+                // Try to match TLS fingerprint for additional device type inference
+                let tlsMatcher = TLSFingerprintMatcher.shared
+                let matchResult = await tlsMatcher.match(ja3sHash: ja3sFingerprint.hash)
+                if matchResult.hasIdentification {
+                    Log.debug("TLS fingerprint matched: \(matchResult.description ?? "Unknown") with confidence \(matchResult.confidence)", category: .tls)
+
+                    // Add TLS signals to inference if device type still unknown
+                    if device.deviceType == .unknown {
+                        let tlsSignals = await DeviceTypeInferenceEngine.shared.signalsFromTLSProbeResult(probeResult)
+                        if !tlsSignals.isEmpty {
+                            let inferredType = await DeviceTypeInferenceEngine.shared.infer(signals: tlsSignals)
+                            if inferredType != .unknown {
+                                device.deviceType = inferredType
+                                Log.debug("Updated device type to \(inferredType.rawValue) from TLS fingerprint", category: .tls)
+                            }
+                        }
+                    }
+                }
+            } else if let error = probeResult.error {
+                Log.debug("TLS probe failed for \(device.mac): \(error)", category: .tls)
+            }
+        }
+
         // Assess security posture now that we have port and banner data
         let openPortNumbers = device.openPorts.map { $0.number }
         let securityPosture = SecurityPostureAssessor.shared.assess(

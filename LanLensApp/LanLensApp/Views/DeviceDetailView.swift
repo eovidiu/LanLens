@@ -32,6 +32,11 @@ struct DeviceDetailView: View {
                         FingerprintCard(fingerprint: fingerprint)
                     }
 
+                    // DHCP & TLS Fingerprinting (if available)
+                    if currentDevice.dhcpFingerprintHash != nil || currentDevice.tlsJA3SHash != nil {
+                        FingerprintingDataCard(device: currentDevice)
+                    }
+
                     // MAC Analysis (if available)
                     if let macAnalysis = currentDevice.macAnalysis {
                         MACAnalysisCard(macAddress: currentDevice.mac, macAnalysis: macAnalysis)
@@ -558,6 +563,116 @@ private struct FingerprintCard: View {
         case .both: return "UPnP + Fingerbank"
         case .tlsFingerprint: return "TLS Fingerprint"
         case .none: return "Unknown"
+        }
+    }
+}
+
+// MARK: - Fingerprinting Data Card (DHCP & TLS)
+
+private struct FingerprintingDataCard: View {
+    let device: Device
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CardHeader(title: "Fingerprinting", icon: "fingerprint")
+
+            VStack(spacing: 0) {
+                // DHCP Fingerprint section
+                if let dhcpHash = device.dhcpFingerprintHash {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "network")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Color.lanLensAccent)
+                                Text("DHCP Option 55")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(Color.lanLensSecondaryText)
+                            }
+
+                            if let dhcpString = device.dhcpFingerprintString {
+                                Text(dhcpString)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                    .lineLimit(1)
+                            }
+
+                            Text("Hash: \(dhcpHash.prefix(16))...")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(Color.lanLensSecondaryText.opacity(0.7))
+                        }
+
+                        Spacer()
+
+                        if device.dhcpCapturedAt != nil {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.lanLensSuccess)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+
+                    if device.tlsJA3SHash != nil {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                            .padding(.leading, 12)
+                    }
+                }
+
+                // TLS Fingerprint section
+                if let tlsHash = device.tlsJA3SHash {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "lock.shield")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Color.lanLensAccent)
+                                Text("TLS JA3S")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(Color.lanLensSecondaryText)
+                            }
+
+                            Text(tlsHash.prefix(24) + "...")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.8))
+                                .lineLimit(1)
+
+                            if let probedAt = device.tlsProbedAt {
+                                Text("Probed: \(formatTimestamp(probedAt))")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Color.lanLensSecondaryText.opacity(0.7))
+                            }
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.lanLensSuccess)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+            }
+        }
+        .background(Color.lanLensCard)
+        .cornerRadius(10)
+    }
+
+    private func formatTimestamp(_ date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 {
+            return "Just now"
+        } else if interval < 3600 {
+            let minutes = Int(interval / 60)
+            return "\(minutes)m ago"
+        } else if interval < 86400 {
+            let hours = Int(interval / 3600)
+            return "\(hours)h ago"
+        } else {
+            let days = Int(interval / 86400)
+            return "\(days)d ago"
         }
     }
 }
