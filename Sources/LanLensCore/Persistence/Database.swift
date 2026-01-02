@@ -170,6 +170,44 @@ public final class DatabaseManager: DatabaseProtocol, @unchecked Sendable {
             try db.create(index: "idx_presence_mac_timestamp", on: "presence_records", columns: ["mac", "timestamp"])
         }
 
+        // Version 5: Fingerbank cache tables (replaces file-based cache)
+        migrator.registerMigration("v5_fingerbank_cache") { db in
+            // Create fingerbank_cache table for SQLite-based fingerprint caching
+            try db.create(table: "fingerbank_cache", ifNotExists: true) { t in
+                t.column("mac", .text).primaryKey()
+                t.column("fingerprint_json", .text).notNull()
+                t.column("dhcp_fingerprint", .text)
+                t.column("user_agents", .text)
+                t.column("signal_hash", .text).notNull()
+                t.column("fetched_at", .datetime).notNull()
+                t.column("expires_at", .datetime).notNull()
+                t.column("hit_count", .integer).notNull().defaults(to: 0)
+                t.column("last_hit_at", .datetime)
+            }
+
+            // Index for expiration-based queries (pruning)
+            try db.create(index: "idx_fingerbank_cache_expires", on: "fingerbank_cache", columns: ["expires_at"])
+
+            // Index for signal hash lookups (cache validation)
+            try db.create(index: "idx_fingerbank_cache_signal_hash", on: "fingerbank_cache", columns: ["signal_hash"])
+
+            // Create cache statistics singleton table
+            try db.create(table: "fingerbank_cache_stats", ifNotExists: true) { t in
+                t.column("id", .integer).primaryKey().check { $0 == 1 }
+                t.column("total_entries", .integer).notNull().defaults(to: 0)
+                t.column("total_hits", .integer).notNull().defaults(to: 0)
+                t.column("total_misses", .integer).notNull().defaults(to: 0)
+                t.column("last_prune_at", .datetime)
+                t.column("last_sync_at", .datetime)
+            }
+
+            // Insert singleton row for statistics
+            try db.execute(sql: """
+                INSERT INTO fingerbank_cache_stats (id, total_entries, total_hits, total_misses)
+                VALUES (1, 0, 0, 0)
+            """)
+        }
+
         // Apply migrations
         try migrator.migrate(dbPool)
     }
