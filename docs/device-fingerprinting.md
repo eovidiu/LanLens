@@ -13,16 +13,19 @@ When scanning a home network, you might find 20+ devices. Knowing only the MAC a
 - What OS/firmware version is it running?
 - Is it a device I recognize, or something unexpected?
 
-### Two-Level Approach
+### Multi-Level Approach
 
-LanLens implements device fingerprinting in two levels:
+LanLens implements device fingerprinting using multiple complementary techniques:
 
 | Level | Method | External Dependency | Data Quality |
 |-------|--------|---------------------|--------------|
 | 1 | UPnP Device Description | None | Good |
-| 2 | Fingerbank API | API key required | Excellent |
+| 2 | Bundled OUI Database | None | Good |
+| 3 | DHCP Fingerprint Database | None | Very Good |
+| 4 | TLS/JA3S Fingerprinting | None | Very Good |
+| 5 | Fingerbank API | API key required | Excellent |
 
-**Level 1** runs by default and requires no configuration. **Level 2** provides enhanced identification but requires a free Fingerbank API key.
+**Levels 1-4** run automatically without any external dependencies. **Level 5** provides enhanced identification but requires a free Fingerbank API key.
 
 ---
 
@@ -111,7 +114,116 @@ The UPnP device description XML typically contains:
 
 ---
 
-## Level 2: Fingerbank Integration (Enhanced)
+## Level 2: Bundled OUI Database
+
+### How It Works
+
+Every network device has a MAC address, and the first three bytes (OUI - Organizationally Unique Identifier) identify the manufacturer. LanLens includes a bundled database that maps OUI prefixes to device manufacturers and common device types.
+
+```
+MAC Address: AA:BB:CC:DD:EE:FF
+             └──┬──┘
+               OUI → Lookup → "Apple Inc." → Likely iPhone/iPad/Mac
+```
+
+### What Data It Provides
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `vendor` | Manufacturer name | "Apple Inc." |
+| `deviceTypes` | Common device types for this vendor | ["phone", "tablet", "laptop"] |
+| `confidence` | Match confidence | 0.6 |
+
+### Advantages
+
+- **No network requests**: Entirely local lookup
+- **Fast**: Sub-millisecond lookups
+- **Universal coverage**: Works for any device with a MAC address
+- **Offline capable**: No internet required
+
+### Limitations
+
+- **Vendor-level only**: Identifies manufacturer, not specific device model
+- **MAC randomization**: Modern devices may use random MACs (reduces effectiveness)
+- **Generic results**: Many vendors make multiple device types
+
+---
+
+## Level 3: DHCP Fingerprint Database
+
+### How It Works
+
+When devices request an IP address via DHCP, they include Option 55 - a Parameter Request List that specifies which DHCP options they want. This list is characteristic of different operating systems and device types.
+
+LanLens includes a bundled database of known DHCP fingerprints mapped to device types.
+
+```
+DHCP Option 55: 1,3,6,15,31,33,43,44,46,47,119,121,249,252
+                ↓
+           SHA256 Hash → Lookup → "Apple iOS device"
+```
+
+### What Data It Provides
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `deviceName` | Matched device type | "Apple iPhone" |
+| `operatingSystem` | Operating system | "iOS" |
+| `confidence` | Match confidence | 0.85 |
+
+### Advantages
+
+- **High accuracy**: DHCP fingerprints are very distinctive
+- **Works across vendors**: OS fingerprint, not just manufacturer
+- **Offline capable**: Uses bundled database
+
+### Limitations
+
+- **Requires DHCP data**: Only works if DHCP fingerprint is known
+- **Static database**: Updated with app releases only
+
+---
+
+## Level 4: TLS/JA3S Fingerprinting
+
+### How It Works
+
+When LanLens performs a deep scan and finds open HTTPS ports (443, 8443, etc.), it connects and captures the TLS Server Hello response. The server's TLS configuration creates a unique fingerprint called JA3S.
+
+```
+TLS Connection to Device:443
+        ↓
+   Server Hello
+        ↓
+   Extract: TLS Version + Cipher + Extensions
+        ↓
+   JA3S Hash → Lookup → "nginx/1.18", "Apache", "Synology DSM"
+```
+
+### What Data It Provides
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `ja3sHash` | Server fingerprint hash | "eb1d94daa7e0344597e756a1fb6e7054" |
+| `serverSoftware` | Matched server software | "nginx" |
+| `tlsVersion` | Negotiated TLS version | "TLS 1.3" |
+| `cipherSuite` | Negotiated cipher | "TLS_AES_256_GCM_SHA384" |
+
+### Advantages
+
+- **Identifies server software**: Can identify web servers, NAS devices, etc.
+- **No special permissions**: Uses standard TLS connections
+- **App Store compatible**: Works within sandbox restrictions
+
+### Limitations
+
+- **Requires HTTPS port**: Only works on devices with TLS services
+- **Active probing**: Requires connecting to the device
+- **Server-side only**: Identifies what software the device runs, not the device itself
+
+---
+
+## Level 5: Fingerbank Integration (Enhanced)
 
 ### What Is Fingerbank?
 
@@ -444,10 +556,12 @@ public struct UPnPService: Codable, Sendable {
 }
 
 public enum FingerprintSource: String, Codable, Sendable {
-    case upnp           // Level 1 only
-    case fingerbank     // Level 2 only
-    case both           // Both levels contributed data
-    case none           // No fingerprint data available
+    case upnp            // Level 1: UPnP device description
+    case fingerbank      // Level 5: Fingerbank API
+    case both            // Multiple sources contributed data
+    case none            // No fingerprint data available
+    case dhcpFingerprint // Level 3: DHCP fingerprint database
+    case tlsFingerprint  // Level 4: TLS/JA3S fingerprinting
 }
 ```
 

@@ -2,6 +2,26 @@
 
 All notable changes to LanLens will be documented in this file.
 
+## [1.2.0] - 2026-01-02
+
+### Added
+- **Offline Fingerprint Database**: Bundled OUI database for vendor identification without internet
+- **DHCP Fingerprinting**: Bundled database of DHCP Option 55 fingerprints for device type identification
+- **TLS/JA3S Fingerprinting**: Active TLS probing during deep scan to identify server software via JA3S hashes
+- **Fingerprinting UI Card**: New device detail section showing fingerprint information
+- **Multiple Fingerprint Sources**: Extended `FingerprintSource` enum with `dhcpFingerprint` and `tlsFingerprint` cases
+
+### Technical
+- Added `BundledDatabaseManager` actor for offline fingerprint database queries
+- Added `DHCPOption55Parser`, `DHCPFingerprintDatabase`, `DHCPFingerprintMatcher` for DHCP fingerprinting
+- Added `TLSHandshakeParser`, `TLSFingerprintDatabase`, `TLSFingerprintMatcher`, `TLSFingerprintProber` for TLS fingerprinting
+- TLS probing integrated into deep scan workflow
+
+### Documentation
+- Updated device-fingerprinting.md with new fingerprinting levels (2-4)
+- Marked fingerprint-enhancements specification as Implemented
+- Updated fingerprint-enhancements-checklist with completion status
+
 ## [1.1.0] - 2026-01-02
 
 ### Added
