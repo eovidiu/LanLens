@@ -331,22 +331,14 @@
 
         .hero-buttons {
             display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 0.5rem;
+            gap: 1.25rem;
+            flex-wrap: wrap;
+            justify-content: center;
         }
 
         .hero-buttons .btn {
             padding: 1rem 2rem;
             font-size: 1rem;
-        }
-
-        .hero-app-icon {
-            width: 128px;
-            height: 128px;
-            border-radius: 28px;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 60px var(--accent-glow);
         }
 
         .app-store-badge {
@@ -1202,7 +1194,6 @@
         <h1>See <span class="gradient">Everything</span><br>on Your Network</h1>
         <p>A native macOS menu bar app for discovering devices, assessing security risks, and detecting smart home protocols with precision.</p>
         <div class="hero-buttons">
-            <img src="assets/app-icon.png" alt="LanLens App Icon" class="hero-app-icon">
             <a href="https://apps.apple.com/us/app/lanlensapp/id6757317898?mt=12" class="app-store-badge" target="_blank">
                 <svg viewBox="0 0 120 40" width="156" height="52">
                     <rect width="120" height="40" rx="6" fill="#000"/>
